@@ -30,10 +30,10 @@ def pull_from_es(settings):
         "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
     }) + 1
 
-    for s, e in Q.intervals(0, nvl(max_bug_id, 0), 100000):
+    for s, e in Q.intervals(0, nvl(max_bug_id, 0), 50000):
         result = destq.query({
             "from": settings.destination.index,
-            "select": ["bug_id", "parents", "children", "descendants"],
+            "select": "*",
             "where": {"range": {"bug_id": {"gte": s, "lt": e}}}
         })
 
@@ -86,7 +86,7 @@ def full_etl(settings):
 
     #FIRST, GET ALL MISSING BUGS
     for s, e in Q.intervals(min_bug_id, nvl(max_bug_id, 0), 10000):
-        with Timer("pull {{start}}..{{end}} from ES", {"start":s, "end":e}):
+        with Timer("pull {{start}}..{{end}} from ES", {"start": s, "end": e}):
             children = sourceq.query({
                 "from": settings.source.alias,
                 "select": ["bug_id", "dependson"],
@@ -181,10 +181,28 @@ SCHEMA = {
             },
             "_id": {"path": "bug_id"},
             "properties": {
-                "bug_id": {"type": "integer", "store": "yes"},
-                "children": {"type": "integer", "store": "yes", "index": "no"},
-                "parents": {"type": "integer", "store": "yes", "index": "no"},
-                "descendants": {"type": "integer", "store": "yes", "index": "no"}
+                "bug_id": {
+                    "type": "integer",
+                    "store": "yes"
+                },
+                "children": {
+                    "type": "integer",
+                    "enabled": False,
+                    "index": "no",
+                    "store": "yes"
+                },
+                "parents": {
+                    "type": "integer",
+                    "enabled": False,
+                    "index": "no",
+                    "store": "yes"
+                },
+                "descendants": {
+                    "type": "integer",
+                    "enabled": False,
+                    "index": "no",
+                    "store": "yes"
+                }
             }
         }
     }

@@ -1,9 +1,12 @@
+from datetime import timedelta, datetime
 from MoDevETL.util.cnv import CNV
+from MoDevETL.util.collections import MAX
 from MoDevETL.util.collections.queue import Queue
 from MoDevETL.util.collections.relation import Relation
 from MoDevETL.util.env import startup
 from MoDevETL.util.env.elasticsearch import ElasticSearch
 from MoDevETL.util.env.logs import Log
+from MoDevETL.util.maths import Math
 from MoDevETL.util.queries import Q
 from MoDevETL.util.queries.es_query import ESQuery
 from MoDevETL.util.struct import Struct, nvl
@@ -25,7 +28,7 @@ def pull_from_es(settings):
     max_bug_id = destq.query({
         "from": settings.destination.index,
         "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
-    })
+    }) + 1
 
     for s, e in Q.intervals(0, nvl(max_bug_id, 0), 100000):
         result = destq.query({
@@ -77,9 +80,12 @@ def full_etl(settings):
     max_bug_id = sourceq.query({
         "from": settings.source.alias,
         "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
-    })
+    }) + 1
 
-    for s, e in Q.intervals(0, max_bug_id, 10000):
+    min_bug_id = MAX(Math.floor(MAX(data.children.domain()), 10000), 0)
+
+    #FIRST, GET ALL MISSING BUGS
+    for s, e in Q.intervals(min_bug_id, nvl(max_bug_id, 0), 10000):
         with Timer("pull {{start}}..{{end}} from ES", {"start":s, "end":e}):
             children = sourceq.query({
                 "from": settings.source.alias,
@@ -96,6 +102,24 @@ def full_etl(settings):
 
         Log.note("{{num}} new records to ES", {"num": len(dirty)})
         push_to_es(settings, data, dirty)
+
+    #PROCESS RECENT CHANGES
+    with Timer("pull recent dependancies from ES"):
+        children = sourceq.query({
+            "from": settings.source.alias,
+            "select": ["bug_id", "dependson"],
+            "where": {"and": [
+                {"range": {"modified_ts": {"gte": CNV.datetime2milli(datetime.utcnow() - timedelta(days=7))}}},
+                {"exists": {"field": "dependson"}}
+            ]}
+        })
+
+    dirty = set()
+    with Timer("fixpoint work"):
+        to_fix_point(children, data, dirty)
+
+    Log.note("{{num}} new records to ES", {"num": len(dirty)})
+    push_to_es(settings, data, dirty)
 
 
 def to_fix_point(children, data, dirty):
@@ -147,7 +171,7 @@ SCHEMA = {
         "index.number_of_replicas": 2
     },
     "mappings": {
-        "heirarchy": {
+        "hierarchy": {
             "_all": {
                 "enabled": False
             },

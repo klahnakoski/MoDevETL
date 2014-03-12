@@ -82,7 +82,7 @@ def full_etl(settings):
         "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
     }) + 1
 
-    min_bug_id = MAX(Math.floor(MAX(data.children.domain()), 10000), 0)
+    min_bug_id = MAX(Math.floor(nvl(MAX(data.children.domain()), 0), 10000), 0)
 
     #FIRST, GET ALL MISSING BUGS
     for s, e in Q.intervals(min_bug_id, nvl(max_bug_id, 0), 10000):

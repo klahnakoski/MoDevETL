@@ -178,8 +178,11 @@ def _simple_expand(template, seq):
                     return val
             except Exception, f:
                 from .env.logs import Log
-                val = toString(val)
-                Log.error(u"Can not expand " + "|".join(ops) + u" in template:\n" + indent(template), e)
+
+                Log.warning("Can not expand " + "|".join(ops) + " in template: {{template}}", {
+                    "template": template
+                }, e)
+        return "[template expansion error]"
 
     return pattern.sub(replacer, template)
 

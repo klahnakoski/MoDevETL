@@ -10,6 +10,7 @@
 from __future__ import unicode_literals
 
 import json
+from math import floor
 
 import re
 import time
@@ -337,7 +338,7 @@ def pretty_json(value):
 
             js = [pretty_json(v) for v in value]
             max_len = MAX(len(j) for j in js)
-            if max_len<=ARRAY_ITEM_MAX_LENGTH and AND(j.find("\n")==-1 for j in js):
+            if max_len <= ARRAY_ITEM_MAX_LENGTH and AND(j.find("\n") == -1 for j in js):
                 #ALL TINY VALUES
                 num_columns = max(1, min(ARRAY_MAX_COLUMNS, int(floor((ARRAY_ROW_LENGTH + 2.0)/float(max_len+2))))) # +2 TO COMPENSATE FOR COMMAS
                 if len(js)<=num_columns:  # DO NOT ADD \n IF ONLY ONE ROW

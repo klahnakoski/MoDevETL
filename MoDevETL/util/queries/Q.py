@@ -702,6 +702,7 @@ def intervals(_min, _max=None, size=1):
         _max = _min
         _min = 0
     _max = int(Math.ceiling(_max))
+    _min = int(Math.floor(_min))
 
     output = ((x, min(x + size, _max)) for x in __builtin__.range(_min, _max, size))
     return output

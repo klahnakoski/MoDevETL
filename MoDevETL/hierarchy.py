@@ -1,17 +1,31 @@
 from datetime import timedelta, datetime
 from MoDevETL.util.cnv import CNV
 from MoDevETL.util.collections import MAX
-from MoDevETL.util.collections.queue import Queue
 from MoDevETL.util.collections.relation import Relation
 from MoDevETL.util.env import startup
 from MoDevETL.util.env.elasticsearch import ElasticSearch
 from MoDevETL.util.env.logs import Log
-from MoDevETL.util.maths import Math
 from MoDevETL.util.queries import Q
 from MoDevETL.util.queries.es_query import ESQuery
 from MoDevETL.util.struct import Struct, nvl
 from MoDevETL.util.times.timer import Timer
 
+
+
+
+def pull_from_es(settings, destq, all_parents, all_children, all_descendants, work_queue):
+    #LOAD PARENTS FROM ES
+
+    for g, r in Q.groupby(work_queue, size=100):
+        result = destq.query({
+            "from": settings.destination.index,
+            "select": "*",
+            "where": {"terms": {"bug_id": r}}
+        })
+        for r in result:
+            all_parents.extend(r.bug_id, r.parents)
+            all_children.extend(r.bug_id, r.children)
+            all_descendants.extend(r.bug_id, r.descendants)
 
 
 def push_to_es(settings, data, dirty):
@@ -83,23 +97,7 @@ def full_etl(settings):
             ]}
         })
 
-    with Timer("fixpoint work"):
-        to_fix_point(settings, destq, children)
-
-
-def pull_from_es(settings, destq, all_parents, all_children, all_descendants, work_queue):
-    #LOAD PARENTS FROM ES
-
-    for g, r in Q.groupby(work_queue, size=1000):
-        result = destq.query({
-            "from": settings.destination.index,
-            "select": "*",
-            "where": {"terms": {"bug_id": r}}
-        })
-        for r in result:
-            all_parents.extend(r.bug_id, r.parents)
-            all_children.extend(r.bug_id, r.children)
-            all_descendants.extend(r.bug_id, r.descendants)
+    to_fix_point(settings, destq, children)
 
 
 def to_fix_point(settings, destq, children):
@@ -109,6 +107,7 @@ def to_fix_point(settings, destq, children):
     all_parents = Relation()
     all_children = Relation()
     all_descendants = Relation()
+    loaded = set()
     work_queue = set()
     dirty = set()
 
@@ -124,19 +123,23 @@ def to_fix_point(settings, destq, children):
     while work_queue:
         next_queue = set()
 
-        pull_from_es(settings, destq, all_parents, all_children, all_descendants, work_queue)
+        frontier = work_queue - loaded
+        if frontier:
+            pull_from_es(settings, destq, all_parents, all_children, all_descendants, frontier)
+            loaded.update(frontier)
 
-        for p in work_queue:
-            is_dirty = False
-            for c in all_children[p]:
-                if all_descendants.testAndAdd(p, c):
-                    is_dirty = True
-                for d in all_descendants[c]:
-                    if all_descendants.testAndAdd(p, d):
+        with Timer("fixpoint work"):
+            for p in work_queue:
+                is_dirty = False
+                for c in all_children[p]:
+                    if all_descendants.testAndAdd(p, c):
                         is_dirty = True
-            if is_dirty:
-                dirty.add(p)
-                next_queue.update(all_parents[p])
+                    for d in all_descendants[c]:
+                        if all_descendants.testAndAdd(p, d):
+                            is_dirty = True
+                if is_dirty:
+                    dirty.add(p)
+                    next_queue.update(all_parents[p])
 
         work_queue = next_queue
 

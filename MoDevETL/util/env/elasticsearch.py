@@ -306,6 +306,7 @@ class ElasticSearch(object):
         try:
             kwargs = wrap(kwargs)
             kwargs.setdefault("timeout", 600)
+            kwargs.headers["Accept-Encoding"] = "gzip,deflate"
             kwargs = unwrap(kwargs)
             response = requests.post(*args, **kwargs)
             if self.debug:

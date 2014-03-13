@@ -22,7 +22,7 @@ from ..struct import nvl, Null, wrap, unwrap
 from ..struct import Struct, StructList
 
 
-DEBUG = False
+DEBUG = True
 
 
 class ElasticSearch(object):
@@ -321,7 +321,11 @@ class ElasticSearch(object):
                 suggestion = " (did you forget \"http://\" prefix on the host name?)"
             else:
                 suggestion = ""
-            Log.error("Problem with call to {{url}}" + suggestion, {"url": args[0]}, e)
+
+            Log.error("Problem with call to {{url}}" + suggestion +"\n{{body}}", {
+                "url": args[0],
+                "body": kwargs["data"] if DEBUG else kwargs["data"][0:100]
+            }, e)
 
     def get(self, *args, **kwargs):
         try:

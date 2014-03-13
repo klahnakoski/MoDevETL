@@ -182,7 +182,7 @@ def _simple_expand(template, seq):
                 Log.warning("Can not expand " + "|".join(ops) + " in template: {{template}}", {
                     "template": template
                 }, e)
-        return "[template expansion error]"
+        return "[template expansion error: ("+str(e)+")]"
 
     return pattern.sub(replacer, template)
 

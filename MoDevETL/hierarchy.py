@@ -30,7 +30,7 @@ def pull_from_es(settings):
         "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
     }) + 1
 
-    for s, e in Q.intervals(0, nvl(max_bug_id, 0), 50000):
+    for s, e in Q.intervals(0, nvl(max_bug_id, 0), 10000):
         result = destq.query({
             "from": settings.destination.index,
             "select": "*",

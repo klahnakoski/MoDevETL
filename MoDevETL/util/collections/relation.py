@@ -77,7 +77,7 @@ class Relation(object):
     def extend(self, key, values):
         to = self.map.get(key, None)
         if not to:
-            to = set()
+            to = set(values)
             self.map[key] = to
             return
 

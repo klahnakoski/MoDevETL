@@ -10,7 +10,7 @@
 from __future__ import unicode_literals
 
 import json
-from math import floor
+
 import re
 import time
 from datetime import datetime, date, timedelta

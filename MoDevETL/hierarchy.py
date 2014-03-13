@@ -67,7 +67,7 @@ def push_to_es(settings, data, dirty):
         }})
 
     dest = ElasticSearch(settings.destination)
-    for g, r in Q.groupby(records, size=1000):
+    for g, r in Q.groupby(records, size=100):
         dest.extend(r)
 
 
@@ -83,6 +83,7 @@ def full_etl(settings):
     }) + 1
 
     min_bug_id = MAX(Math.floor(nvl(MAX(data.children.domain()), 0), 10000), 0)
+    # min_bug_id = 60000
 
     #FIRST, GET ALL MISSING BUGS
     for s, e in Q.intervals(min_bug_id, nvl(max_bug_id, 0), 10000):

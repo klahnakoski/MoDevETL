@@ -22,7 +22,7 @@ from ..struct import nvl, Null, wrap, unwrap
 from ..struct import Struct, StructList
 
 
-DEBUG = True
+DEBUG = False
 
 
 class ElasticSearch(object):

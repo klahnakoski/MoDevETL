@@ -117,6 +117,7 @@ def to_fix_point(settings, destq, children):
         childs = r.dependson
         work_queue.add(p)
         for c in childs:
+            work_queue.add(c)
             all_parents.add(c, p)
             all_children.add(p, c)
 
@@ -166,7 +167,7 @@ SCHEMA = {
         "index.number_of_replicas": 2
     },
     "mappings": {
-        "hierarchy": {
+        "bug_hierarchy": {
             "_all": {
                 "enabled": False
             },

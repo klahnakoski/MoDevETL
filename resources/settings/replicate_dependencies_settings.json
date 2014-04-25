@@ -16,6 +16,7 @@
 			"last_replication_time":"./results/data/last_dependencies_replication_time.txt"
 		},
 		"debug":{
+			"trace":true,
 			"log":[{
 				"class": "logging.handlers.RotatingFileHandler",
 				"filename": "./results/logs/replication.log",

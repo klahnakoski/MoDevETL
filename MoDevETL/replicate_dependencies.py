@@ -98,6 +98,8 @@ def get_pending(es, since):
         else:
             pending_bugs = pending_bugs + temp
 
+        break  #DEBUGGING
+
     Log.note("Source has {{num}} bug versions for updating", {
         "num": len(pending_bugs)
     })
@@ -148,40 +150,48 @@ def replicate(source, destination, pending, last_updated):
                 "fields": ["bug_id", "modified_ts", "expires_on", "dependson", "blocked"]
             })
 
-            d2 = [
-                {
-                    "id": str(x.bug_id) + "_" + str(x.modified_ts)[:-3],
-                    "value": {
-                        "bug_id": x.bug_id,
-                        "modified_ts": x.modified_ts,
-                        "expires_on": x.expires_on,
-                        "dependson": x.dependson
+            with Timer("Push to destination"):
+                d2 = [
+                    {
+                        "id": str(x.bug_id) + "_" + str(x.modified_ts)[:-3],
+                        "value": {
+                            "bug_id": x.bug_id,
+                            "modified_ts": x.modified_ts,
+                            "expires_on": x.expires_on,
+                            "dependson": x.dependson
+                        }
                     }
-                }
-                for x in data.hits.hits.fields
-                if x.dependson
-            ]
-            destination.extend(d2)
-
-            d3 = Q.run({
-                "from": data.hits.hits.fields,
-                "where": {"exists": {"field": "blocked"}},
-                "select": [
-                    {"name": "bug_id", "value": "blocked."},  # SINCE blocked IS A LIST, ARE SELECTING THE LIST VALUES, AND EFFECTIVELY PERFORMING A JOIN
-                    "modified_ts",
-                    "expires_on",
-                    {"name": "dependson", "value": "bug_id"}
+                    for x in data.hits.hits.fields
+                    if x.dependson
                 ]
-            })
+                destination.extend(d2)
 
-            destination.extend([
-                {
-                    "id": str(x.bug_id) + "_" + str(x.dependson) + "_" + str(x.modified_ts)[:-3],
-                    "value": x
-                }
-                for x in d3
-                if x.dependson
-            ])
+            with Timer("filter"):
+                d4 = Q.run({
+                    "from": data.hits.hits.fields,
+                    "where": {"exists": {"field": "blocked"}}
+                })
+
+            with Timer("select"):
+                d3 = Q.run({
+                    "from": d4,
+                    "select": [
+                        {"name": "bug_id", "value": "blocked."},  # SINCE blocked IS A LIST, ARE SELECTING THE LIST VALUES, AND EFFECTIVELY PERFORMING A JOIN
+                        "modified_ts",
+                        "expires_on",
+                        {"name": "dependson", "value": "bug_id"}
+                    ]
+                })
+
+            with Timer("Push to destination"):
+                destination.extend([
+                    {
+                        "id": str(x.bug_id) + "_" + str(x.dependson) + "_" + str(x.modified_ts)[:-3],
+                        "value": x
+                    }
+                    for x in d3
+                    if x.dependson
+                ])
 
 
 

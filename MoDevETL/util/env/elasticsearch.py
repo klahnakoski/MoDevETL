@@ -41,6 +41,10 @@ class ElasticSearch(object):
 
     """
     def __init__(self, settings=None):
+        """
+        settings.explore_metadata == True - IF PROBING THE CLUSTER FOR METATDATA IS ALLOWED
+        """
+
         if settings is None:
             self.debug = DEBUG
             return
@@ -49,22 +53,35 @@ class ElasticSearch(object):
         assert settings.host
         assert settings.index
         assert settings.type
+        settings.setdefault("explore_metadata", True)
 
         if settings.index == settings.alias:
             Log.error("must have a unique index name")
-        self.metadata = None
+        self.cluster_metadata = None
         if not settings.port:
             settings.port = 9200
         self.debug = nvl(settings.debug, DEBUG)
-
         self.settings = settings
-        index = self.get_index(settings.index)
-        if index:
-            settings.alias = settings.index
-            settings.index = index
+        try:
+            index = self.get_index(settings.index)
+            if index:
+                settings.alias = settings.index
+                settings.index = index
+        except Exception, e:
+            # EXPLORING (get_metadata()) IS NOT ALLOWED ON THE PUBLIC CLUSTER
+            pass
 
         self.path = settings.host + ":" + unicode(settings.port) + "/" + settings.index + "/" + settings.type
 
+
+    @staticmethod
+    def get_or_create_index(settings, schema, limit_replicas=False):
+        es = ElasticSearch(settings)
+        aliases = es.get_aliases()
+        if settings.index not in [a.index for a in aliases]:
+            schema = CNV.JSON2object(CNV.object2JSON(schema), paths=True)
+            es = ElasticSearch.create_index(settings, schema, limit_replicas=limit_replicas)
+        return es
 
 
     @staticmethod
@@ -96,7 +113,7 @@ class ElasticSearch(object):
     def delete_index(settings, index=None):
         index = nvl(index, settings.index)
 
-        ElasticSearch.delete(
+        DUMMY.delete(
             settings.host + ":" + unicode(settings.port) + "/" + index,
         )
 
@@ -116,17 +133,29 @@ class ElasticSearch(object):
         return wrap(output)
 
     def get_metadata(self):
-        if not self.metadata:
-            response = self.get(self.settings.host + ":" + unicode(self.settings.port) + "/_cluster/state")
-            self.metadata = response.metadata
-        return self.metadata
+        if self.settings.explore_metadata:
+            if not self.cluster_metadata:
+                response = self.get(self.settings.host + ":" + unicode(self.settings.port) + "/_cluster/state")
+                self.cluster_metadata = response.metadata
+                self.node_metatdata = self.get(self.settings.host + ":" + unicode(self.settings.port) + "/")
+        else:
+            Log.error("Metadata exploration has been disabled")
+        return self.cluster_metadata
+
 
     def get_schema(self):
-        indices = self.get_metadata().indices
-        index = indices[self.settings.index]
-        if not index.mappings[self.settings.type]:
-            Log.error("{{index}} does not have type {{type}}", self.settings)
-        return index.mappings[self.settings.type]
+        if self.settings.explore_metadata:
+            indices = self.get_metadata().indices
+            index = indices[self.settings.index]
+            if not index.mappings[self.settings.type]:
+                Log.error("ElasticSearch index ({{index}}) does not have type ({{type}})", self.settings)
+            return index.mappings[self.settings.type]
+        else:
+            mapping = self.get(self.settings.host + ":" + unicode(self.settings.port) + "/" + self.settings.index +"/" + self.settings.type + "/_mapping")
+            if not mapping[self.settings.type]:
+                Log.error("{{index}} does not have type {{type}}", self.settings)
+            return wrap({"mappings":mapping[self.settings.type]})
+
 
     #DELETE ALL INDEXES WITH GIVEN PREFIX, EXCEPT name
     def delete_all_but(self, prefix, name):
@@ -144,7 +173,7 @@ class ElasticSearch(object):
         return prefix + CNV.datetime2string(timestamp, "%Y%m%d_%H%M%S")
 
     def add_alias(self, alias):
-        self.metadata = None
+        self.cluster_metadata = None
         requests.post(
             self.settings.host + ":" + unicode(self.settings.port) + "/_aliases",
             CNV.object2JSON({
@@ -194,17 +223,21 @@ class ElasticSearch(object):
         return True
 
     def delete_record(self, filter):
-        query = {"query": filter}
-
-        if isinstance(query, dict):
-            ElasticSearch.delete(
-                self.path + "/_query",
-                data=CNV.object2JSON(query)
-            )
+        self.get_metadata()
+        if self.node_metatdata.version.number.startswith("0.90"):
+            query = filter
+        elif self.node_metatdata.version.number.startswith("1.0"):
+            query = {"query": filter}
         else:
-            ElasticSearch.delete(
-                self.path + "/" + query
-            )
+            Log.error("not implemented yet")
+
+        if self.debug:
+            Log.note("Delete bugs:\n{{query}}", {"query": query})
+
+        self.delete(
+            self.path + "/_query",
+            data=CNV.object2JSON(query)
+        )
 
     def extend(self, records):
         """
@@ -214,40 +247,46 @@ class ElasticSearch(object):
             OPTIONAL "id" PROPERTY IS ALSO ACCEPTED
         """
         lines = []
-        for r in records:
-            id = r.get("id", None)
-            if "json" in r:
-                json = r["json"]
-            elif "value" in r:
-                json = CNV.object2JSON(r["value"])
-            else:
-                Log.error("Expecting every record given to have \"value\" or \"json\" property")
+        try:
+            for r in records:
+                id = r.get("id", None)
+                if "json" in r:
+                    json = r["json"]
+                elif "value" in r:
+                    json = CNV.object2JSON(r["value"])
+                else:
+                    Log.error("Expecting every record given to have \"value\" or \"json\" property")
 
-            if id == None:
-                id = Random.hex(40)
+                if id == None:
+                    id = Random.hex(40)
 
-            lines.append('{"index":{"_id": ' + CNV.object2JSON(id) + '}}')
-            lines.append(json)
+                lines.append('{"index":{"_id": ' + CNV.object2JSON(id) + '}}')
+                lines.append(json)
 
-        if not lines:
-            return
-        response = self.post(
-            self.path + "/_bulk",
-            data=("\n".join(lines) + "\n").encode("utf8"),
-            headers={"Content-Type": "text"},
-            timeout=self.settings.timeout
-        )
-        items = response["items"]
+            if not lines:
+                return
+            response = self.post(
+                self.path + "/_bulk",
+                data=("\n".join(lines) + "\n").encode("utf8"),
+                headers={"Content-Type": "text"},
+                timeout=self.settings.timeout
+            )
+            items = response["items"]
 
-        for i, item in enumerate(items):
-            if not item.index.ok:
-                Log.error("{{error}} while loading line:\n{{line}}", {
-                    "error": item.index.error,
-                    "line": lines[i * 2 + 1]
-                })
+            for i, item in enumerate(items):
+                if not item.index.ok:
+                    Log.error("{{error}} while loading line:\n{{line}}", {
+                        "error": item.index.error,
+                        "line": lines[i * 2 + 1]
+                    })
 
-        if self.debug:
-            Log.note("{{num}} items added", {"num": len(lines) / 2})
+            if self.debug:
+                Log.note("{{num}} items added", {"num": len(lines) / 2})
+        except Exception, e:
+            if e.message.startswith("sequence item "):
+                Log.error("problem with {{data}}", {"data": repr(lines[int(e.message[14:16].strip())])}, e)
+            Log.error("problem", e)
+
 
     # RECORDS MUST HAVE id AND json AS A STRING OR
     # HAVE id AND value AS AN OBJECT
@@ -263,16 +302,16 @@ class ElasticSearch(object):
         else:
             interval = unicode(seconds) + "s"
 
-        response = ElasticSearch.put(
+        response = self.put(
             self.settings.host + ":" + unicode(
                 self.settings.port) + "/" + self.settings.index + "/_settings",
             data="{\"index.refresh_interval\":\"" + interval + "\"}"
         )
 
-        result = CNV.JSON2object(response.content)
+        result = CNV.JSON2object(response.content.decode("utf-8"))
         if not result.ok:
             Log.error("Can not set refresh interval ({{error}})", {
-                "error": response.content
+                "error": response.content.decode("utf-8")
             })
 
     def search(self, query):
@@ -310,8 +349,8 @@ class ElasticSearch(object):
             kwargs = unwrap(kwargs)
             response = requests.post(*args, **kwargs)
             if self.debug:
-                Log.note(response.content[:130])
-            details = CNV.JSON2object(response.content)
+                Log.note(response.content.decode("utf-8")[:130])
+            details = CNV.JSON2object(response.content.decode("utf-8"))
             if details.error:
                 Log.error(CNV.quote2string(details.error))
             if details._shards.failed > 0:
@@ -334,8 +373,8 @@ class ElasticSearch(object):
             kwargs.setdefault("timeout", 600)
             response = requests.get(*args, **kwargs)
             if self.debug:
-                Log.note(response.content[:130])
-            details = wrap(CNV.JSON2object(response.content))
+                Log.note(response.content.decode("utf-8")[:130])
+            details = wrap(CNV.JSON2object(response.content.decode("utf-8")))
             if details.error:
                 Log.error(details.error)
             return details
@@ -348,7 +387,7 @@ class ElasticSearch(object):
             kwargs.setdefault("timeout", 30)
             response = requests.put(*args, **kwargs)
             if self.debug:
-                Log.note(response.content)
+                Log.note(response.content.decode("utf-8"))
             return response
         except Exception, e:
             Log.error("Problem with call to {{url}}", {"url": args[0]}, e)
@@ -358,7 +397,7 @@ class ElasticSearch(object):
             kwargs.setdefault("timeout", 30)
             response = requests.delete(*args, **kwargs)
             if self.debug:
-                Log.note(response.content)
+                Log.note(response.content.decode("utf-8"))
             return response
         except Exception, e:
             Log.error("Problem with call to {{url}}", {"url": args[0]}, e)

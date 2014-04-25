@@ -44,6 +44,10 @@ def newline(value):
     return "\n" + toString(value).lstrip("\n")
 
 
+def quote(value):
+    return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+
 def indent(value, prefix=u"\t", indent=None):
     if indent != None:
         prefix = prefix * indent
@@ -95,8 +99,14 @@ def between(value, prefix, suffix):
 
 
 def right(value, len):
-    if len <= 0: return u""
+    if len <= 0:
+        return u""
     return value[-len:]
+
+def left(value, len):
+    if len <= 0:
+        return u""
+    return value[0:len]
 
 
 def find_first(value, find_arr, start=0):
@@ -143,7 +153,7 @@ def _expand(template, seq):
     elif isinstance(template, list):
         return "".join(_expand(t, seq) for t in template)
     else:
-        from ...env.logs import Log
+        from .env.logs import Log
 
         Log.error("can not handle")
 
@@ -193,7 +203,7 @@ def toString(val):
     elif isinstance(val, (dict, list, set)):
         from .jsons import json_encoder
 
-        return json_encoder.encode(val, pretty=True)
+        return json_encoder(val, pretty=True)
     elif hasattr(val, "__json__"):
         return val.__json__()
     elif isinstance(val, timedelta):

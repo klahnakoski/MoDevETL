@@ -23,7 +23,7 @@ class File(object):
     ASSUMES ALL FILE CONTENT IS UTF8 ENCODED STRINGS
     """
 
-    def __init__(self, filename, buffering=2 ** 14):
+    def __init__(self, filename, buffering=2 ** 14, suffix=None):
         """
         YOU MAY SET filename TO {"path":p, "key":k} FOR CRYPTO FILES
         """
@@ -40,6 +40,9 @@ class File(object):
             self._filename = "/".join(filename.path.split(os.sep))  # USE UNIX STANDARD
             self.buffering = buffering
 
+        if suffix:
+            self._filename = File.add_suffix(self._filename, suffix)
+
     @property
     def filename(self):
         return self._filename.replace("/", os.sep)
@@ -48,20 +51,25 @@ class File(object):
     def abspath(self):
         return os.path.abspath(self._filename)
 
+    @staticmethod
+    def add_suffix(filename, suffix):
+        """
+        ADD suffix TO THE filename (NOT INCLUDING THE FILE EXTENSION)
+        """
+        path = filename.split("/")
+        parts = path[-1].split(".")
+        i = max(len(parts)-2, 0)
+        parts[i]=parts[i]+suffix
+        path[-1]=".".join(parts)
+        return "/".join(path)
+
+
     def backup_name(self, timestamp=None):
         """
         RETURN A FILENAME THAT CAN SERVE AS A BACKUP FOR THIS FILE
         """
         suffix = CNV.datetime2string(nvl(timestamp, datetime.now()), "%Y%m%d_%H%M%S")
-        parts = self._filename.split(".")
-        if len(parts) == 1:
-            output = self._filename + "." + suffix
-        elif len(parts) > 1 and parts[-2][-1] == "/":
-            output = self._filename + "." + suffix
-        else:
-            parts.insert(-1, suffix)
-            output = ".".join(parts)
-        return output
+        return File.add_suffix(self._filename, suffix)
 
     def read(self, encoding="utf8"):
         with open(self._filename, "rb") as f:
@@ -107,17 +115,25 @@ class File(object):
         #http://stackoverflow.com/questions/8009882/how-to-read-large-file-line-by-line-in-python
         #http://effbot.org/zone/wide-finder.htm
         def output():
-            with io.open(self._filename, "rb") as f:
-                for line in f:
-                    yield line.decode("utf8")
+            try:
+                with io.open(self._filename, "rb") as f:
+                    for line in f:
+                        yield line.decode("utf8")
+            except Exception, e:
+                from .logs import Log
+                Log.error("Can not read line from {{filename}}", {"filename": self._filename}, e)
 
         return output()
 
     def append(self, content):
         if not self.parent.exists:
             self.parent.create()
-        with open(self._filename, "a") as output_file:
-            output_file.write(content)
+        with open(self._filename, "ab") as output_file:
+            if isinstance(content, str):
+                from .logs import Log
+                Log.error("expecting to write unicode only")
+            output_file.write(content.encode("utf-8"))
+            output_file.write(b"\n")
 
     def add(self, content):
         return self.append(content)
@@ -125,9 +141,14 @@ class File(object):
     def extend(self, content):
         if not self.parent.exists:
             self.parent.create()
-        with open(self._filename, "a") as output_file:
+        with open(self._filename, "ab") as output_file:
             for c in content:
-                output_file.write(c)
+                if isinstance(c, str):
+                    from .logs import Log
+                    Log.error("expecting to write unicode only")
+
+                output_file.write(c.encode("utf-8"))
+                output_file.write(b"\n")
 
 
     def delete(self):

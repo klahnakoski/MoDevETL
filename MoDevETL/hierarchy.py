@@ -70,7 +70,7 @@ def full_etl(settings):
 
     destq = ESQuery(dest)
     min_bug_id = destq.query({
-        "from": settings.destination.index,
+        "from": nvl(settings.destination.alias, settings.destination.index),
         "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
     })
     min_bug_id = MAX(min_bug_id-1000, 0)
@@ -78,7 +78,7 @@ def full_etl(settings):
     source = ElasticSearch(settings.source)
     sourceq = ESQuery(source)
     max_bug_id = sourceq.query({
-        "from": settings.source.alias,
+        "from": nvl(settings.source.alias, settings.source.index),
         "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
     }) + 1
     max_bug_id = nvl(max_bug_id, 0)

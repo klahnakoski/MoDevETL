@@ -1,5 +1,7 @@
 *.json
 *.py[cod]
+results
+*.tab
 
 # C extensions
 *.so

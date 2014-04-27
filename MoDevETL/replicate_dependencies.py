@@ -98,8 +98,6 @@ def get_pending(es, since):
         else:
             pending_bugs = pending_bugs + temp
 
-        break  #DEBUGGING
-
     Log.note("Source has {{num}} bug versions for updating", {
         "num": len(pending_bugs)
     })

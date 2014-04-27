@@ -260,7 +260,7 @@ def _select_a_field(field):
 def _select(template, data, fields, depth):
     output = StructList()
     deep_path = []
-    deep_fields = StructList()
+    deep_fields = UniqueIndex(["name"])
     for d in data:
         if isinstance(d, Struct):
             Log.error("programmer error, _select can not handle Struct")
@@ -272,7 +272,7 @@ def _select(template, data, fields, depth):
             children = nvl(children, c)
             if index:
                 path = f.value[0:index:]
-                deep_fields.append(f)  # KEEP TRACK OF WHICH FIELDS NEED DEEPER SELECT
+                deep_fields.add(f)  # KEEP TRACK OF WHICH FIELDS NEED DEEPER SELECT
                 short = MIN(len(deep_path), len(path))
                 if path[:short:] != deep_path[:short:]:
                     Log.error("Dangerous to select into more than one branch at time")

@@ -1,2 +1,2 @@
 set PYTHONPATH=.
-pypy MoDevETL\hierarchy.py
+pypy MoDevETL\hierarchy.py --settings=resources/settings/hierarchy_settings.json

@@ -23,7 +23,7 @@ from MoDevETL.util.struct import Struct, nvl
 from MoDevETL.util.times.timer import Timer
 
 
-
+MIN_DEPENDENCY_LIFETIME = 12 * 60 * 60 * 1000  # 12 hours of dependency is ignored (mistakes happen)
 
 def pull_from_es(settings, destq, all_parents, all_children, all_descendants, work_queue):
     #LOAD PARENTS FROM ES
@@ -88,7 +88,7 @@ def full_etl(settings):
         with Timer("pull {{start}}..{{end}} from ES", {"start": s, "end": e}):
             children = sourceq.query({
                 "from": settings.source.alias,
-                "select": ["bug_id", "dependson", "blocked"],
+                "select": ["bug_id", "dependson", "blocked", "modified_ts", "expires_on"],
                 "where": {"and": [
                     {"range": {"bug_id": {"gte": s, "lt": e}}},
                     {"or": [
@@ -105,7 +105,7 @@ def full_etl(settings):
     with Timer("pull recent dependancies from ES"):
         children = sourceq.query({
             "from": settings.source.alias,
-            "select": ["bug_id", "dependson"],
+            "select": ["bug_id", "dependson", "blocked"],
             "where": {"and": [
                 {"range": {"modified_ts": {"gte": CNV.datetime2milli(datetime.utcnow() - timedelta(days=7))}}},
                 {"or": [
@@ -133,6 +133,8 @@ def to_fix_point(settings, destq, children):
     for r in children:
         me = r.bug_id
         work_queue.add(me)
+        if r.expires_on-r.modified_ts < MIN_DEPENDENCY_LIFETIME:
+            continue
 
         childs = r.dependson
         for c in childs:

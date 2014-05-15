@@ -23,12 +23,12 @@ from MoDevETL.util.struct import Struct, nvl
 from MoDevETL.util.times.timer import Timer
 
 
-MIN_DEPENDENCY_LIFETIME = 12 * 60 * 60 * 1000  # 12 hours of dependency is ignored (mistakes happen)
+MIN_DEPENDENCY_LIFETIME = 2 * 24 * 60 * 60 * 1000  # less than 2 days of dependency is ignored (mistakes happen)
 
 def pull_from_es(settings, destq, all_parents, all_children, all_descendants, work_queue):
     #LOAD PARENTS FROM ES
 
-    for g, r in Q.groupby(work_queue, size=100):
+    for g, r in Q.groupby(Q.sort(work_queue), size=100):
         result = destq.query({
             "from": settings.destination.index,
             "select": "*",
@@ -52,14 +52,15 @@ def push_to_es(settings, data, dirty):
         c = data.children[bug_id]
         records.append({"id": bug_id, "value": {
             "bug_id": bug_id,
-            "parents": p,
-            "children": c,
-            "descendants": d
+            "parents": Q.sort(p),
+            "children": Q.sort(c),
+            "descendants": Q.sort(d)
         }})
 
     dest = ElasticSearch(settings.destination)
-    for g, r in Q.groupby(records, size=100):
-        dest.extend(r)
+    for g, r in Q.groupby(records, size=200):
+        with Timer("Push {{num}} records to ES", {"num": len(r)}):
+            dest.extend(r)
 
 
 def full_etl(settings):
@@ -74,6 +75,7 @@ def full_etl(settings):
         "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
     })
     min_bug_id = MAX(min_bug_id-1000, 0)
+    # min_bug_id = 880000
 
     source = ElasticSearch(settings.source)
     sourceq = ESQuery(source)
@@ -126,49 +128,54 @@ def to_fix_point(settings, destq, children):
     all_children = Relation()
     all_descendants = Relation()
     loaded = set()
-    work_queue = set()
+    load_queue = set()
     dirty = set()
 
     #LOAD GRAPH
     for r in children:
         me = r.bug_id
-        work_queue.add(me)
         if r.expires_on-r.modified_ts < MIN_DEPENDENCY_LIFETIME:
             continue
 
+        load_queue.add(me)
         childs = r.dependson
         for c in childs:
-            work_queue.add(c)
+            load_queue.add(c)
             all_parents.add(c, me)
             all_children.add(me, c)
         parents = r.blocked
         for p in parents:
-            work_queue.add(p)
+            load_queue.add(p)
             all_parents.add(me, p)
             all_children.add(p, me)
 
-    while work_queue:
-        next_queue = set()
-
-        frontier = work_queue - loaded
+    while load_queue:
+        frontier = load_queue - loaded
         if frontier:
-            pull_from_es(settings, destq, all_parents, all_children, all_descendants, frontier)
-            loaded.update(frontier)
+            with Timer("pull {{num}} from ES for the frontier", {"num": len(frontier)}):
+                pull_from_es(settings, destq, all_parents, all_children, all_descendants, frontier)
+                loaded.update(frontier)
 
-        with Timer("fixpoint work"):
-            for me in work_queue:
-                is_dirty = False
-                for c in all_children[me]:
-                    if all_descendants.testAndAdd(me, c):
-                        is_dirty = True
-                    for d in all_descendants[c]:
-                        if all_descendants.testAndAdd(me, d):
+        work_queue = load_queue
+        load_queue = set()
+
+        while work_queue:
+            next_queue = set()
+            with Timer("fixpoint work"):
+                for me in work_queue:
+                    is_dirty = False
+                    for c in all_children[me]:
+                        if all_descendants.testAndAdd(me, c):
                             is_dirty = True
-                if is_dirty:
-                    dirty.add(me)
-                    next_queue.update(all_parents[me])
+                        for d in all_descendants[c]:
+                            if all_descendants.testAndAdd(me, d):
+                                is_dirty = True
+                    if is_dirty:
+                        dirty.add(me)
+                        load_queue.update(all_parents[me])
+                        next_queue.update(all_parents[me])
 
-        work_queue = next_queue
+            work_queue = next_queue
 
     Log.note("{{num}} new records to ES", {"num": len(dirty)})
     push_to_es(settings, Struct(
@@ -181,10 +188,11 @@ def to_fix_point(settings, destq, children):
 def main():
     settings = startup.read_settings()
     Log.start(settings.debug)
-    try:
-        full_etl(settings)
-    finally:
-        Log.stop()
+    with startup.SingleInstance(flavor_id=settings.args.filename):
+        try:
+            full_etl(settings)
+        finally:
+            Log.stop()
 
 
 SCHEMA = {

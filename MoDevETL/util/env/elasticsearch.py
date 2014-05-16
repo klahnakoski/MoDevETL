@@ -12,8 +12,6 @@ from datetime import datetime
 import re
 import time
 import requests
-import sys
-from MoDevETL.util.strings import expand_template
 
 from ..maths.randoms import Random
 from ..thread.threads import ThreadedQueue
@@ -45,6 +43,7 @@ class ElasticSearch(object):
     def __init__(self, settings=None):
         """
         settings.explore_metadata == True - IF PROBING THE CLUSTER FOR METATDATA IS ALLOWED
+        settings.timeout == NUMBER OF SECONDS TO WAIT FOR RESPONSE, OR SECONDS TO WAIT FOR DOWNLOAD (PASSED TO requests)
         """
 
         if settings is None:
@@ -102,7 +101,7 @@ class ElasticSearch(object):
                 })
                 schema.settings.index.number_of_replicas = health.number_of_nodes-1
 
-        DUMMY.post(
+        DUMMY._post(
             settings.host + ":" + unicode(settings.port) + "/" + settings.index,
             data=CNV.object2JSON(schema).encode("utf8"),
             headers={"Content-Type": "application/json"}
@@ -275,7 +274,7 @@ class ElasticSearch(object):
             except Exception, e:
                 Log.error("can not make request body from\n{{lines|indent}}", {"lines": lines}, e)
 
-            response = self.post(
+            response = self._post(
                 self.path + "/_bulk",
                 data=data_bytes,
                 headers={"Content-Type": "text"},
@@ -334,7 +333,7 @@ class ElasticSearch(object):
                 else:
                     show_query = query
                 Log.note("Query:\n{{query|indent}}", {"query": show_query})
-            return self.post(
+            return self._post(
                 self.path + "/_search",
                 data=CNV.object2JSON(query).encode("utf8"),
                 timeout=self.settings.timeout
@@ -348,7 +347,7 @@ class ElasticSearch(object):
     def threaded_queue(self, size=None, period=None):
         return ThreadedQueue(self, size=size, period=period)
 
-    def post(self, *args, **kwargs):
+    def _post(self, *args, **kwargs):
         if "data" in kwargs and not isinstance(kwargs["data"], str):
             Log.error("data must be utf8 encoded string")
 

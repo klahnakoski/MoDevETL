@@ -28,7 +28,7 @@ json_decoder = json.JSONDecoder().decode
 # 1) WHEN USING cPython, WE HAVE NO COMPILER OPTIMIZATIONS: THE BEST STRATEGY IS TO
 #    CONVERT THE MEMORY STRUCTURE TO STANDARD TYPES AND SEND TO THE INSANELY FAST
 #    DEFAULT JSON ENCODER
-# 2) WHEN USING PYPY, WE USE CLEAR AND SIMPLE PROGRAMMING SO THE OPTIMIZER CAN DO
+# 2) WHEN USING PYPY, WE USE CLEAR-AND-SIMPLE PROGRAMMING SO THE OPTIMIZER CAN DO
 #    ITS JOB.  ALONG WITH THE UnicodeBuilder WE GET NEAR C SPEEDS
 
 
@@ -122,13 +122,13 @@ def _value2json(value, _buffer):
     elif type is str:
         append(_buffer, u"\"")
         v = value.decode("utf8")
-        v = ESCAPE.sub(replace, v)
-        append(_buffer, v)  # ASSUME ALREADY utf-8 ENCODED
+        for c in v:
+            append(_buffer, ESCAPE_DCT.get(c, c))
         append(_buffer, u"\"")
     elif type is unicode:
         append(_buffer, u"\"")
-        v = ESCAPE.sub(replace, value)
-        append(_buffer, v)
+        for c in value:
+            append(_buffer, ESCAPE_DCT.get(c, c))
         append(_buffer, u"\"")
     elif type in (int, long, Decimal):
         append(_buffer, unicode(value))
@@ -144,11 +144,11 @@ def _value2json(value, _buffer):
         append(_buffer, "\"")
         append(_buffer, unicode(value.total_seconds()))
         append(_buffer, "second\"")
-    elif hasattr(value, '__iter__'):
-        _iter2json(value, _buffer)
     elif hasattr(value, '__json__'):
         j = value.__json__()
         append(_buffer, j)
+    elif hasattr(value, '__iter__'):
+        _iter2json(value, _buffer)
     else:
         raise Exception(repr(value) + " is not JSON serializable")
 
@@ -182,13 +182,13 @@ def _dict2json(value, _buffer):
         prefix = u", \""
         if isinstance(k, str):
             k = k.decode("utf8")
-        append(_buffer, ESCAPE.sub(replace, unicode(k)))
+        for c in k:
+            append(_buffer, ESCAPE_DCT.get(c, c))
         append(_buffer, u"\": ")
         _value2json(v, _buffer)
     append(_buffer, u"}")
 
 
-ESCAPE = re.compile(ur'[\x00-\x1f\\"\b\f\n\r\t]')
 ESCAPE_DCT = {
     u"\\": u"\\\\",
     u"\"": u"\\\"",
@@ -200,10 +200,6 @@ ESCAPE_DCT = {
 }
 for i in range(0x20):
     ESCAPE_DCT.setdefault(chr(i), u'\\u{0:04x}'.format(i))
-
-
-def replace(match):
-    return ESCAPE_DCT[match.group(0)]
 
 
 #REMOVE VALUES THAT CAN NOT BE JSON-IZED
@@ -225,11 +221,6 @@ def _scrub(value):
         return unicode(value.decode("utf8"))
     elif type is Decimal:
         return float(value)
-    elif type.__name__ == "bool_":  # DEAR ME!  Numpy has it's own booleans (value==False could be used, but 0==False in Python.  DOH!)
-        if value == False:
-            return False
-        else:
-            return True
     elif isinstance(value, dict):
         output = {}
         for k, v in value.iteritems():
@@ -242,6 +233,11 @@ def _scrub(value):
             v = _scrub(v)
             output.append(v)
         return output
+    elif type.__name__ == "bool_":  # DEAR ME!  Numpy has it's own booleans (value==False could be used, but 0==False in Python.  DOH!)
+        if value == False:
+            return False
+        else:
+            return True
     elif hasattr(value, '__json__'):
         try:
             return json._default_decoder.decode(value.__json__())
@@ -287,6 +283,7 @@ ARRAY_ITEM_MAX_LENGTH = 30
 ARRAY_MAX_COLUMNS = 10
 INDENT = "    "
 
+
 def pretty_json(value):
     try:
         if value == None:
@@ -301,8 +298,7 @@ def pretty_json(value):
                     value = unicode(value.decode("latin1"))
                     Log.warning("Should not have latin1 encoded strings: {{value}}", {"value": value}, e)
             try:
-                v = ESCAPE.sub(replace, value)
-                return "\"" + v + "\""
+                return quote(v)
             except Exception, e:
                 from .env.logs import Log
 
@@ -336,7 +332,7 @@ def pretty_json(value):
                     return "{\"" + items[0][0] + "\": " + pretty_json(items[0][1]).strip() + "}"
 
                 items = sorted(items, lambda a, b: value_compare(a[0], b[0]))
-                values = ["\"" + ESCAPE.sub(replace, unicode(k)) + "\": " + indent(pretty_json(v)).strip() for k, v in items if v != None]
+                values = [quote(k)+": " + indent(pretty_json(v)).strip() for k, v in items if v != None]
                 return "{\n" + INDENT + (",\n"+INDENT).join(values) + "\n}"
             except Exception, e:
                 from .env.logs import Log
@@ -410,6 +406,16 @@ def pretty_json(value):
         from .env.logs import Log
 
         Log.error("Problem turning value ({{value}}) to json", {"value": repr(value)}, e)
+
+
+
+
+
+ESCAPE = re.compile(ur'[\x00-\x1f\\"\b\f\n\r\t]')
+def replace(match):
+    return ESCAPE_DCT[match.group(0)]
+def quote(value):
+    return "\""+ESCAPE.sub(replace, value)+"\""
 
 
 def indent(value, prefix=INDENT):

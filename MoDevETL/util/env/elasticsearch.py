@@ -12,13 +12,15 @@ from datetime import datetime
 import re
 import time
 import requests
+from ..queries import Q
 
 from ..maths.randoms import Random
 from ..thread.threads import ThreadedQueue
 from ..maths import Math
 from ..cnv import CNV
 from ..env.logs import Log
-from ..struct import nvl, Null, wrap, unwrap
+from ..struct import nvl, Null
+from ..structs.wraps import wrap, unwrap
 from ..struct import Struct, StructList
 
 
@@ -38,6 +40,9 @@ class ElasticSearch(object):
     AND REMOVING INDEXES WHEN THEY HAVE BEEN REPLACED.  IT USES A STANDARD
     SUFFIX (YYYYMMDD-HHMMSS) TO TRACK AGE AND RELATIONSHIP TO THE ALIAS,
     IF ANY YET.
+
+    THIS CLASS IS A CONFUSIG MIX OF ES CONTAINER MANAGEMENT AND ES INDEX
+    MANIPULATION
 
     """
     def __init__(self, settings=None):
@@ -59,37 +64,59 @@ class ElasticSearch(object):
         if settings.index == settings.alias:
             Log.error("must have a unique index name")
         self.cluster_metadata = None
-        if not settings.port:
-            settings.port = 9200
+        settings.port = nvl(settings.port, 9200)
         self.debug = nvl(settings.debug, DEBUG)
         self.settings = settings
-        try:
-            index = self.get_index(settings.index)
-            if index:
-                settings.alias = settings.index
-                settings.index = index
-        except Exception, e:
-            # EXPLORING (get_metadata()) IS NOT ALLOWED ON THE PUBLIC CLUSTER
-            pass
+
+        if settings.alias == None:
+            aliases = self.get_aliases()
+            found_index = Q.sort([a for a in aliases if a.index == settings.index]).last()
+            if found_index:
+                settings.alias = found_index.alias
+            else:
+                found_index = Q.sort([a for a in aliases if a.alias == settings.index]).last()
+                if found_index:
+                    settings.alias = found_index.alias
+                    settings.index = found_index.index
 
         self.path = settings.host + ":" + unicode(settings.port) + "/" + settings.index + "/" + settings.type
 
 
     @staticmethod
-    def get_or_create_index(settings, schema, limit_replicas=False):
+    def get_or_create_index(settings, schema=None, limit_replicas=None):
         es = ElasticSearch(settings)
         aliases = es.get_aliases()
-        if settings.index not in [a.index for a in aliases]:
-            schema = CNV.JSON2object(CNV.object2JSON(schema), paths=True)
-            es = ElasticSearch.create_index(settings, schema, limit_replicas=limit_replicas)
+        # FIX SETTINGS
+        if settings.alias == None and not re.match(".*\\d{8}_\\d{6}", settings.index):
+            settings.alias = settings.index
+            settings.index = ElasticSearch.proto_name(settings.alias)
+        elif settings.alias != None and settings.index == None:
+            settings.index = es.get_index(settings.alias)
+
+        if settings.alias in aliases.alias:
+            settings.index = Q.sort([a for a in aliases if a.alias == settings.alias]).last().index
+            return es
+        if settings.alias in aliases.index:
+            #JUST IN CASE THERE IS NON-CONVENTION
+            settings.index = settings.alias
+            return es
+
+        es = ElasticSearch.create_index(settings, schema, limit_replicas=limit_replicas)
         return es
 
 
     @staticmethod
-    def create_index(settings, schema, limit_replicas=False):
-        schema = wrap(schema)
-        if isinstance(schema, basestring):
-            schema = CNV.JSON2object(schema)
+    def create_index(settings, schema=None, limit_replicas=None):
+        if not schema and settings.schema_file:
+            from .files import File
+
+            schema = CNV.JSON2object(File(settings.schema_file).read(), flexible=True, paths=True)
+        elif isinstance(schema, basestring):
+            schema = CNV.JSON2object(schema, paths=True)
+        else:
+            schema = CNV.JSON2object(CNV.object2JSON(schema), paths=True)
+
+        limit_replicas = nvl(limit_replicas, settings.limit_replicas)
 
         if limit_replicas:
             # DO NOT ASK FOR TOO MANY REPLICAS
@@ -107,7 +134,9 @@ class ElasticSearch(object):
             headers={"Content-Type": "application/json"}
         )
         time.sleep(2)
+
         es = ElasticSearch(settings)
+        es.add_alias(settings.alias)
         return es
 
     @staticmethod
@@ -158,7 +187,7 @@ class ElasticSearch(object):
             return wrap({"mappings":mapping[self.settings.type]})
 
 
-    #DELETE ALL INDEXES WITH GIVEN PREFIX, EXCEPT name
+    # DELETE ALL INDEXES WITH GIVEN PREFIX, EXCEPT name
     def delete_all_but(self, prefix, name):
         if prefix == name:
             Log.note("{{index_name}} will not be deleted", {"index_name": prefix})
@@ -230,7 +259,7 @@ class ElasticSearch(object):
         elif self.node_metatdata.version.number.startswith("1.0"):
             query = {"query": filter}
         else:
-            Log.error("not implemented yet")
+            raise NotImplementedError
 
         if self.debug:
             Log.note("Delete bugs:\n{{query}}", {"query": query})
@@ -323,7 +352,7 @@ class ElasticSearch(object):
                 "error": response.content.decode("utf-8")
             })
 
-    def search(self, query):
+    def search(self, query, timeout=None):
         query = wrap(query)
         try:
             if self.debug:
@@ -336,7 +365,7 @@ class ElasticSearch(object):
             return self._post(
                 self.path + "/_search",
                 data=CNV.object2JSON(query).encode("utf8"),
-                timeout=self.settings.timeout
+                timeout=nvl(timeout, self.settings.timeout)
             )
         except Exception, e:
             Log.error("Problem with search (path={{path}}):\n{{query|indent}}", {
@@ -355,17 +384,24 @@ class ElasticSearch(object):
             kwargs = wrap(kwargs)
             kwargs.setdefault("timeout", 600)
             kwargs.headers["Accept-Encoding"] = "gzip,deflate"
+            kwargs.headers["Accept-Charset"] = "UTF-8"
             kwargs = unwrap(kwargs)
             response = requests.post(*args, **kwargs)
+            content = response.content
             if self.debug:
-                Log.note(response.content.decode("utf-8")[:130])
-            details = CNV.JSON2object(response.content.decode("utf-8"))
+                Log.note(content.decode("utf-8")[:130])
+            details = CNV.JSON2object(content.decode("utf-8"))
             if details.error:
                 Log.error(CNV.quote2string(details.error))
             if details._shards.failed > 0:
                 Log.error("Shard failure")
             return details
         except Exception, e:
+            for i, c in enumerate(content):
+                try:
+                    temp=c.decode("utf-8")
+                except Exception, f:
+                    Log.error(c)
             if args[0][0:4] != "http":
                 suggestion = " (did you forget \"http://\" prefix on the host name?)"
             else:
@@ -393,7 +429,7 @@ class ElasticSearch(object):
     def put(self, *args, **kwargs):
         try:
             kwargs = wrap(kwargs)
-            kwargs.setdefault("timeout", 30)
+            kwargs.setdefault("timeout", 60)
             response = requests.put(*args, **kwargs)
             if self.debug:
                 Log.note(response.content.decode("utf-8"))
@@ -403,7 +439,7 @@ class ElasticSearch(object):
 
     def delete(self, *args, **kwargs):
         try:
-            kwargs.setdefault("timeout", 30)
+            kwargs.setdefault("timeout", 60)
             response = requests.delete(*args, **kwargs)
             if self.debug:
                 Log.note(response.content.decode("utf-8"))

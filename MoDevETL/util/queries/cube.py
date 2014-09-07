@@ -12,7 +12,8 @@ from .. import struct
 from ..collections.matrix import Matrix
 from ..collections import MAX, OR
 from ..queries.query import _normalize_edge
-from ..struct import StructList, wrap
+from ..struct import StructList
+from ..structs.wraps import wrap, wrap_dot, listwrap
 from ..env.logs import Log
 
 
@@ -28,11 +29,10 @@ class Cube(object):
         ALLOWED, USING THE select AND edges TO DESCRIBE THE data
         """
 
-
         self.is_value = False if isinstance(select, list) else True
         self.select = select
 
-        #ENSURE frum IS PROPER FORM
+        # ENSURE frum IS PROPER FORM
         if isinstance(select, list):
             if OR(not isinstance(v, Matrix) for v in data.values()):
                 Log.error("Expecting data to be a dict with Matrix values")
@@ -48,7 +48,7 @@ class Cube(object):
                 # EXPECTING NO MORE THAN ONE rownum EDGE IN THE DATA
                 length = MAX([len(v) for v in data.values()])
                 if length >= 1:
-                    self.edges = [{"name": "rownum", "domain": {"type": "index"}}]
+                    self.edges = wrap([{"name": "rownum", "domain": {"type": "index"}}])
                 else:
                     self.edges = StructList.EMPTY
             elif isinstance(data, list):
@@ -56,7 +56,7 @@ class Cube(object):
                     Log.error("not expecting a list of records")
 
                 data = {select.name: Matrix.wrap(data)}
-                self.edges = [{"name": "rownum", "domain": {"type": "index"}}]
+                self.edges = wrap([{"name": "rownum", "domain": {"type": "index"}}])
             elif isinstance(data, Matrix):
                 if isinstance(select, list):
                     Log.error("not expecting a list of records")
@@ -105,9 +105,6 @@ class Cube(object):
             Log.error("can not get value of multi-valued cubes")
         return self.data[self.select.name].cube
 
-    def __float__(self):
-        return self.value
-
     def __lt__(self, other):
         return self.value < other
 
@@ -118,7 +115,7 @@ class Cube(object):
         if other == None:
             if self.edges:
                 return False
-            if self.value == None:
+            if self.is_value and self.value == None:
                 return True
             return False
         return self.value == other
@@ -157,10 +154,10 @@ class Cube(object):
         return self.data[item]
 
     def get_columns(self):
-        return self.edges + struct.listwrap(self.select)
+        return self.edges + listwrap(self.select)
 
     def _select(self, select):
-        selects = struct.listwrap(select)
+        selects = listwrap(select)
         is_aggregate = OR(s.aggregate != None and s.aggregate != "none" for s in selects)
         if is_aggregate:
             values = {s.name: Matrix(value=self.data[s.value].aggregate(s.aggregate)) for s in selects}
@@ -168,6 +165,16 @@ class Cube(object):
         else:
             values = {s.name: self.data[s.value] for s in selects}
             return Cube(select, self.edges, values)
+
+    def filter(self, where):
+        if len(self.edges)==1 and self.edges[0].domain.type=="index":
+            # USE THE STANDARD LIST FILTER
+            from ..queries import Q
+            return Q.filter(where, self.data.values()[0].cube)
+        else:
+            # FILTER DOES NOT ALTER DIMESIONS, JUST WHETHER THERE ARE VALUES IN THE CELLS
+            Log.unexpected("Incomplete")
+
 
     def groupby(self, edges):
         """
@@ -182,20 +189,17 @@ class Cube(object):
 
         if len(stacked) + len(remainder) != len(self.edges):
             Log.error("can not find some edges to group by")
-
+        # CACHE SOME RESULTS
         keys = [e.name for e in self.edges]
-        parts = [e.domain.partitions for e in self.edges]
         getKey = [e.domain.getKey for e in self.edges]
+        lookup = [[getKey[i](p) for p in e.domain.partitions] for i, e in enumerate(self.edges)]
+
         def coord2term(coord):
-            output = {keys[i]: getKey[i](parts[i][coord[i]]) for i in range(len(edges))}
-            for k, v in output.items():
-                if v==None:
-                    Log.error("problem")
+            output = wrap_dot({keys[i]: lookup[i][c] for i, c in enumerate(coord)})
             return output
-            # return {e.name: e.domain.getKey(e.domain.partitions[coord[i]]) for i, e in enumerate(self.edges) if coord[i] != -1}
 
         if isinstance(self.select, list):
-            selects = struct.listwrap(self.select)
+            selects = listwrap(self.select)
             index, v = zip(*self.data[selects[0].name].groupby(selector))
 
             coord = wrap([coord2term(c) for c in index])
@@ -206,6 +210,15 @@ class Cube(object):
                 values.append(v)
 
             output = zip(coord, [Cube(self.select, remainder, {s.name: v[i] for i, s in enumerate(selects)}) for v in zip(*values)])
+        elif not remainder:
+            # v IS A VALUE, NO NEED TO WRAP IT IN A Cube
+            output = (
+                (
+                    coord2term(coord),
+                    v
+                )
+                for coord, v in self.data[self.select.name].groupby(selector)
+            )
         else:
             output = (
                 (
@@ -222,4 +235,20 @@ class Cube(object):
             return str(self.data)
         else:
             return str(self.data)
+
+    def __int__(self):
+        if self.is_value:
+            return int(self.value)
+        else:
+            return int(self.data)
+
+    def __float__(self):
+        if self.is_value:
+            v = self.value
+            if v == None:
+                return v
+            else:
+                return float(v)
+        else:
+            return float(self.data)
 

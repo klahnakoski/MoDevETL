@@ -11,9 +11,10 @@ from __future__ import unicode_literals
 
 import json
 from .jsons import json_encoder, use_pypy, UnicodeBuilder
-from .struct import StructList, Null, wrap, unwrap, EmptyList
+from .struct import StructList, Null, EmptyList
+from .structs.wraps import wrap, wrap_dot
 
-DEBUG = True
+DEBUG = False
 
 # PARSE MODES
 ARRAY = 1   # PARSING INSIDE AN ARRAY

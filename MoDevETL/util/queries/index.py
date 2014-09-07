@@ -11,18 +11,25 @@
 from __future__ import unicode_literals
 from ..queries.unique_index import UniqueIndex
 from ..env.logs import Log
-from ..struct import unwrap, wrap, tuplewrap
-
+from ..structs.wraps import wrap, unwrap, tuplewrap
 
 class Index(object):
     """
     USING DATABASE TERMINOLOGY, THIS IS A NON-UNIQUE INDEX
     """
 
-    def __init__(self, keys):
+    def __init__(self, data, keys=None):
+        if keys is None:
+            keys=data
+            data=None
+
         self._data = {}
         self._keys = tuplewrap(keys)
         self.count = 0
+
+        if data:
+            for i, d in enumerate(data):
+                self.add(d)
 
     def __getitem__(self, key):
         try:
@@ -47,7 +54,7 @@ class Index(object):
             Log.error("something went wrong", e)
 
     def __setitem__(self, key, value):
-        Log.error("Not implemented")
+        raise NotImplementedError
 
 
     def add(self, val):
@@ -69,7 +76,41 @@ class Index(object):
 
 
     def __contains__(self, key):
-        return self[key]
+        expected = True if self[key] else False
+        testing = self._test_contains(key)
+
+        if testing==expected:
+            return testing
+        else:
+            Log.error("not expected")
+
+    def _test_contains(self, key):
+        try:
+            if isinstance(key, (list, tuple)) and len(key) < len(self._keys):
+                # RETURN ANOTHER Index
+                length = len(key)
+                key = value2key(self._keys[0:length:], key)
+                d = self._data
+                for k in key[:length]:
+                    try:
+                        d = d[k]
+                    except Exception, e:
+                        return False
+                return True
+
+            key = value2key(self._keys, key)
+            d = self._data
+            for k in key:
+                try:
+                    d = d[k]
+                except Exception, e:
+                    return False
+            return True
+        except Exception, e:
+            Log.error("something went wrong", e)
+
+
+
 
     def __nonzero__(self):
         if self._data.keys():

@@ -8,8 +8,8 @@
 # Author: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 from __future__ import unicode_literals
-from ..struct import wrap, StructList, unwrap
-
+from ..collections import OR
+from ..structs.wraps import wrap
 
 TRUE_FILTER = True
 FALSE_FILTER = False
@@ -57,9 +57,12 @@ def _normalize(esfilter):
     while isDiff:
         isDiff = False
 
-        if esfilter["and"]:
+        if esfilter["and"] != None:
             output = []
             for a in esfilter["and"]:
+                if isinstance(a, (list, set)):
+                    from dzAlerts.util.env.logs import Log
+                    Log.error("and clause is not allowed a list inside a list")
                 a_ = normalize(a)
                 if a_ is not a:
                     isDiff = True
@@ -68,9 +71,7 @@ def _normalize(esfilter):
                     isDiff = True
                     continue
                 if a == FALSE_FILTER:
-                    isDiff = True
-                    output = None
-                    break
+                    return FALSE_FILTER
                 if a.get("and", None):
                     isDiff = True
                     a.isNormal = None
@@ -85,10 +86,10 @@ def _normalize(esfilter):
                 esfilter = output[0]
                 break
             elif isDiff:
-                esfilter["and"] = output
+                esfilter = wrap({"and": output})
             continue
 
-        if esfilter["or"]:
+        if esfilter["or"] != None:
             output = []
             for a in esfilter["or"]:
                 a_ = _normalize(a)
@@ -97,9 +98,7 @@ def _normalize(esfilter):
                 a = a_
 
                 if a == TRUE_FILTER:
-                    isDiff = True
-                    output = None
-                    break
+                    return TRUE_FILTER
                 if a == FALSE_FILTER:
                     isDiff = True
                     continue
@@ -116,14 +115,37 @@ def _normalize(esfilter):
                 esfilter = output[0]
                 break
             elif isDiff:
-                esfilter["or"] = output
+                esfilter = wrap({"or": output})
             continue
 
-        if esfilter.terms:
+        if esfilter.term != None:
+            if esfilter.term.keys():
+                esfilter.isNormal = True
+                return esfilter
+            else:
+                return TRUE_FILTER
+
+        if esfilter.terms != None:
             for k, v in esfilter.terms.items():
                 if len(v) > 0:
-                    esfilter.isNormal = True
-                    return esfilter
+                    if OR(vv == None for vv in v):
+                        rest = [vv for vv in v if vv != None]
+                        if len(rest) > 0:
+                            return {
+                                "or": [
+                                    {"missing": {"field": k}},
+                                    {"terms": {k: rest}}
+                                ],
+                                "isNormal": True
+                            }
+                        else:
+                            return {
+                                "missing": {"field": k},
+                                "isNormal": True
+                            }
+                    else:
+                        esfilter.isNormal = True
+                        return esfilter
             return FALSE_FILTER
 
         if esfilter["not"] != None:

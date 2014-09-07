@@ -15,13 +15,14 @@ from . import group_by
 from ..collections import UNION, MIN
 from ..queries import flat_list, query
 from ..queries.filters import TRUE_FILTER, FALSE_FILTER
-from ..queries.query import Query, _normalize_selects
+from ..queries.query import Query, _normalize_selects, sort_direction
 from ..queries.cube import Cube
 from .index import UniqueIndex, Index
 from .flat_list import FlatList
 from ..maths import Math
 from ..env.logs import Log
-from ..struct import nvl, listwrap, EmptyList, split_field, unwrap, wrap, join_field
+from ..struct import nvl, EmptyList, split_field, join_field
+from ..structs.wraps import listwrap, wrap, unwrap
 from .. import struct
 from ..struct import Struct, Null, StructList
 
@@ -39,15 +40,15 @@ def run(query):
     elif isinstance(frum, Query):
         frum = run(frum)
     else:
-        Log.error("Do ont know how to handle")
+        Log.error("Do not know how to handle")
 
     if query.edges:
-        Log.error("not implemented yet")
+        raise NotImplementedError
 
     try:
         if query.filter != None or query.esfilter != None:
             Log.error("use 'where' clause")
-    except Exception, e:
+    except AttributeError, e:
         pass
 
     if query.window:
@@ -60,11 +61,11 @@ def run(query):
     if query.where is not TRUE_FILTER:
         frum = filter(frum, query.where)
 
-    if query.sort:
-        frum = sort(frum, query.sort)
-
     if query.select:
         frum = select(frum, query.select)
+
+    if query.sort:
+        frum = sort(frum, query.sort)
 
     return frum
 
@@ -73,7 +74,7 @@ groupby = group_by.groupby
 
 
 def index(data, keys=None):
-#return dict that uses keys to index data
+# return dict that uses keys to index data
     o = Index(keys)
     for d in data:
         o.add(d)
@@ -114,7 +115,7 @@ def map2set(data, relation):
 
     if isinstance(relation, dict):
         try:
-            #relation[d] is expected to be a list
+            # relation[d] is expected to be a list
             # return set(cod for d in data for cod in relation[d])
             output = set()
             for d in data:
@@ -125,7 +126,7 @@ def map2set(data, relation):
             Log.error("Expecting a dict with lists in codomain", e)
     else:
         try:
-            #relation[d] is expected to be a list
+            # relation[d] is expected to be a list
             # return set(cod for d in data for cod in relation[d])
             output = set()
             for d in data:
@@ -214,7 +215,7 @@ def _tuple_deep(v, field, depth, record):
 
 
 def select(data, field_name):
-#return list with values from field_name
+# return list with values from field_name
     if isinstance(data, Cube):
         return data._select(_normalize_selects(field_name))
 
@@ -387,17 +388,21 @@ def sort(data, fieldnames=None):
         if fieldnames == None:
             return wrap(sorted(data))
 
-        fieldnames = struct.listwrap(fieldnames)
+        fieldnames = listwrap(fieldnames)
         if len(fieldnames) == 1:
             fieldnames = fieldnames[0]
-            #SPECIAL CASE, ONLY ONE FIELD TO SORT BY
+            # SPECIAL CASE, ONLY ONE FIELD TO SORT BY
             if isinstance(fieldnames, basestring):
                 def comparer(left, right):
                     return cmp(nvl(left, Struct())[fieldnames], nvl(right, Struct())[fieldnames])
 
                 return StructList([unwrap(d) for d in sorted(data, cmp=comparer)])
             else:
-                #EXPECTING {"field":f, "sort":i} FORMAT
+                # EXPECTING {"field":f, "sort":i} FORMAT
+                fieldnames.sort = sort_direction[fieldnames.sort]
+                fieldnames.field = nvl(fieldnames.field, fieldnames.value)
+                if fieldnames.field==None:
+                    Log.error("Expecting sort to have 'field' attribute")
                 def comparer(left, right):
                     return fieldnames["sort"] * cmp(nvl(left, Struct())[fieldnames["field"]], nvl(right, Struct())[fieldnames["field"]])
 
@@ -429,17 +434,17 @@ def sort(data, fieldnames=None):
         Log.error("Problem sorting\n{{data}}", {"data": data}, e)
 
 
+def pairwise(values):
+    """
+    WITH values = [a, b, c, d, ...]
+    RETURN [(a, b), (b, c), (c, d), ...]
+    """
+    i = iter(values)
+    a = next(i)
 
-
-def add(*values):
-    total = Null
-    for v in values:
-        if total == None:
-            total = v
-        else:
-            if v != None:
-                total += v
-    return total
+    for b in i:
+        yield (a, b)
+        a = b
 
 
 def filter(data, where):
@@ -450,7 +455,7 @@ def filter(data, where):
         return data
 
     if isinstance(data, Cube):
-        Log.error("Do not know how to handle")
+        data.filter(where)
 
     return drill_filter(where, data)
 
@@ -500,6 +505,7 @@ def drill_filter(esfilter, data):
             return True
         if filter is FALSE_FILTER:
             return False
+
         filter = wrap(filter)
 
         if filter["and"]:
@@ -551,6 +557,26 @@ def drill_filter(esfilter, data):
                 return {"term": output}
             else:
                 return result
+        elif filter.equal:
+            a, b = filter["equal"]
+            first_a, rest_a = parse_field(a, data, depth)
+            first_b, rest_b = parse_field(b, data, depth)
+            val_a = data[first_a]
+            val_b = data[first_b]
+            if not rest_a:
+                if not rest_b:
+                    if val_a != val_b:
+                        return False
+                    else:
+                        return True
+                else:
+                    return {"term": {rest_b: val_a}}
+            else:
+                if not rest_b:
+                    return {"term": {rest_a: val_b}}
+                else:
+                    return {"equal": [rest_a, rest_b]}
+
         elif filter.terms:
             result = True
             output = {}
@@ -610,7 +636,7 @@ def drill_filter(esfilter, data):
                 first, rest = parse_field(col, data, depth)
                 d = data[first]
                 if not rest:
-                    if not d.startswith(val):
+                    if d==None or not d.startswith(val):
                         result = False
                 else:
                     output[rest] = val
@@ -636,7 +662,7 @@ def drill_filter(esfilter, data):
         else:
             Log.error(u"Can not interpret esfilter: {{esfilter}}", {u"esfilter": filter})
 
-    output = []  #A LIST OF OBJECTS MAKING THROUGH THE FILTER
+    output = []  # A LIST OF OBJECTS MAKING THROUGH THE FILTER
 
     def main(sequence, esfilter, row, depth):
         """
@@ -680,7 +706,7 @@ def drill_filter(esfilter, data):
         else:
             nested = row[-1][primary_column[depth]]
             if not nested:
-                #PASSED FILTER, BUT NO CHILDREN, SO ADD NULL CHILDREN
+                # PASSED FILTER, BUT NO CHILDREN, SO ADD NULL CHILDREN
                 for i in range(depth, max):
                     row.append(None)
                 uniform_output.append(row)
@@ -694,16 +720,25 @@ def drill_filter(esfilter, data):
         recurse(o, 0)
 
     if not max:
-        #SIMPLE LIST AS RESULT
+        # SIMPLE LIST AS RESULT
         return wrap([unwrap(u[0]) for u in uniform_output])
 
     return FlatList(primary_column[0:max], uniform_output)
+
+
+def compile_function(source):
+    temp = None
+    exec "def temp(row, rownum, rows):\n    return "+source+";"
+    return temp
 
 
 def wrap_function(func):
     """
     RETURN A THREE-PARAMETER WINDOW FUNCTION TO MATCH
     """
+    if isinstance(func, basestring):
+        return compile_function(func)
+
     numarg = func.__code__.co_argcount
     if numarg == 0:
         def temp(row, rownum, rows):
@@ -743,38 +778,47 @@ def window(data, param):
         data = sort(data, sortColumns)
 
     if not aggregate and not edges:
-        #SIMPLE CALCULATED VALUE
+        # SIMPLE CALCULATED VALUE
         for rownum, r in enumerate(data):
             r[name] = calc_value(r, rownum, data)
         return
 
+    if not aggregate or aggregate == "none":
+        for keys, values in groupby(data, edges.value):
+            if not values:
+                continue     # CAN DO NOTHING WITH THIS ZERO-SAMPLE
 
+            sequence = sort(values, sortColumns)
 
+            for rownum, r in enumerate(sequence):
+                r[name] = calc_value(r, rownum, sequence)
+        return
 
-    for rownum, r in enumerate(data):
-        r["__temp__"] = calc_value(r, rownum, data)
-
-    for keys, values in groupby(data, edges):
+    for keys, values in groupby(data, edges.value):
         if not values:
             continue     # CAN DO NOTHING WITH THIS ZERO-SAMPLE
 
         sequence = sort(values, sortColumns)
+
+        for rownum, r in enumerate(sequence):
+            r["__temp__"] = calc_value(r, rownum, sequence)
+
         head = nvl(_range.max, _range.stop)
         tail = nvl(_range.min, _range.start)
 
-        #PRELOAD total
+        # PRELOAD total
         total = aggregate()
         for i in range(tail, head):
             total.add(sequence[i].__temp__)
 
-        #WINDOW FUNCTION APPLICATION
+        # WINDOW FUNCTION APPLICATION
         for i, r in enumerate(sequence):
             r[name] = total.end()
             total.add(sequence[i + head].__temp__)
             total.sub(sequence[i + tail].__temp__)
 
     for r in data:
-        r["__temp__"] = None  #CLEANUP
+        r["__temp__"] = None  # CLEANUP
 
 
 
@@ -799,3 +843,8 @@ def intervals(_min, _max=None, size=1):
 
 
 
+def reverse(vals):
+    """
+    ONLY BECAUSE I AM A NUMBSKULL: I CAN NEVER REMEMBER THIS FUNCTION
+    """
+    return reversed(vals)

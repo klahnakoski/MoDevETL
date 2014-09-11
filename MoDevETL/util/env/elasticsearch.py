@@ -41,7 +41,7 @@ class ElasticSearch(object):
     SUFFIX (YYYYMMDD-HHMMSS) TO TRACK AGE AND RELATIONSHIP TO THE ALIAS,
     IF ANY YET.
 
-    THIS CLASS IS A CONFUSIG MIX OF ES CONTAINER MANAGEMENT AND ES INDEX
+    THIS CLASS IS A CONFUSING MIX OF ES CONTAINER MANAGEMENT AND ES INDEX
     MANIPULATION
 
     """
@@ -107,6 +107,9 @@ class ElasticSearch(object):
 
     @staticmethod
     def create_index(settings, schema=None, limit_replicas=None):
+        """
+        CREATE AN INDEX WITH REQUIRED NAME FORMAT.  DO NOT CREATE ALIAS.
+        """
         # FIX SETTINGS
         if settings.alias == None and not re.match(".*\\d{8}_\\d{6}", settings.index):
             settings.alias = settings.index
@@ -150,7 +153,6 @@ class ElasticSearch(object):
         time.sleep(2)
 
         es = ElasticSearch(settings)
-        es.add_alias(settings.alias)
         return es
 
     @staticmethod

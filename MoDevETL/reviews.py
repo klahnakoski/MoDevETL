@@ -210,13 +210,13 @@ def main():
     settings = startup.read_settings()
     Log.start(settings.debug)
     try:
-        reviews = ElasticSearch.get_or_create_index(settings.destination)
+        reviews = ElasticSearch.create_index(settings.destination)
         bugs = ElasticSearch(settings.source)
 
         with ESQuery(bugs) as esq:
             max_bug = esq.query({
                 "from": "private_bugs",
-                "select":{"name":"max_bug", "value":"bug_id", "aggregate":"maximum"}
+                "select": {"name": "max_bug", "value": "bug_id", "aggregate": "maximum"}
             })
 
         #PROBE WHAT RANGE OF BUGS IS LEFT TO DO (IN EVENT OF FAILURE)
@@ -236,6 +236,9 @@ def main():
             with Multithread(func, threads=threads) as m:
                 m.inbound.silent = True
                 m.execute(reversed([{"bugs": xrange(s, e)} for s, e in Q.intervals(0, min_bug, size=1000)]))
+
+        reviews.add_alias()
+        reviews.delete_all_but()
     finally:
         Log.stop()
 

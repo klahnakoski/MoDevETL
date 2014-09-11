@@ -55,7 +55,7 @@ class ElasticSearch(object):
             self.debug = DEBUG
             return
 
-        settings = wrap(settings)
+        settings = wrap(settings).copy()
         assert settings.host
         assert settings.index
         assert settings.type
@@ -107,6 +107,20 @@ class ElasticSearch(object):
 
     @staticmethod
     def create_index(settings, schema=None, limit_replicas=None):
+        # FIX SETTINGS
+        if settings.alias == None and not re.match(".*\\d{8}_\\d{6}", settings.index):
+            settings.alias = settings.index
+            settings.index = ElasticSearch.proto_name(settings.alias)
+        elif settings.alias != None and settings.index == None:
+            settings.index = ElasticSearch.proto_name(settings.alias)
+        else:
+            existing_index = ElasticSearch(settings).get_index(settings.alias)
+            if existing_index == settings.index:
+                Log.error("Index ({{index_name}}) already exists", {"index_name": settings.index})
+            else:
+                pass
+
+        # GET THE SCHEMA
         if not schema and settings.schema_file:
             from .files import File
 
@@ -186,14 +200,18 @@ class ElasticSearch(object):
                 Log.error("{{index}} does not have type {{type}}", self.settings)
             return wrap({"mappings":mapping[self.settings.type]})
 
-
     # DELETE ALL INDEXES WITH GIVEN PREFIX, EXCEPT name
-    def delete_all_but(self, prefix, name):
-        if prefix == name:
+    def delete_all_but(self, prefix=None, index=None):
+        if not prefix:
+            prefix = self.settings.alias
+        if not index:
+            index = self.settings.index
+
+        if prefix == index:
             Log.note("{{index_name}} will not be deleted", {"index_name": prefix})
         for a in self.get_aliases():
             # MATCH <prefix>YYMMDD_HHMMSS FORMAT
-            if re.match(re.escape(prefix) + "\\d{8}_\\d{6}", a.index) and a.index != name:
+            if re.match(re.escape(prefix) + "\\d{8}_\\d{6}", a.index) and a.index != index:
                 ElasticSearch.delete_index(self.settings, a.index)
 
     @staticmethod
@@ -202,7 +220,13 @@ class ElasticSearch(object):
             timestamp = datetime.utcnow()
         return prefix + CNV.datetime2string(timestamp, "%Y%m%d_%H%M%S")
 
-    def add_alias(self, alias):
+    def add_alias(self, alias=None):
+        if not alias:
+            if not self.settings.alias:
+                Log.error("Expewcting an alias")
+            else:
+                alias = self.settings.alias
+
         self.cluster_metadata = None
         requests.post(
             self.settings.host + ":" + unicode(self.settings.port) + "/_aliases",

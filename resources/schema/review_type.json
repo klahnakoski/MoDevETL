@@ -1,0 +1,102 @@
+{
+    "settings": {
+        "index.number_of_shards": 3,
+        "index.number_of_replicas": 2,
+        "index.store.throttle.type": "merge",
+        "index.store.throttle.max_bytes_per_sec": "2mb",
+        "index.cache.filter.expire": "1m",
+        "index.cache.field.type": "soft",
+        "analysis": {
+            "analyzer": {
+                "whitespace": {
+                    "type": "pattern",
+                    "pattern": "\\s+"
+                }
+            }
+        }
+    },
+    "mappings": {
+        "patch_review": {
+            "_all": {
+                "enabled": false
+            },
+            "_source": {
+                "compress": false,
+                "enabled": true
+            },
+            "_id": {
+                "type": "string",
+                "store": "yes",
+                "index": "not_analyzed"
+            },
+            "properties": {
+                "bug_id": {
+                    "type": "integer",
+                    "store": "yes",
+                    "index": "not_analyzed"
+                },
+                "attach_id": {
+                    "type": "integer",
+                    "store": "yes",
+                    "index": "not_analyzed"
+                },
+                "requester": {
+                    "type": "string",
+                    "store": "yes",
+                    "index": "not_analyzed"
+                },
+                "reviewer": {
+                    "type": "string",
+                    "store": "yes",
+                    "index": "not_analyzed"
+                },
+                "request_time": {
+                    "type": "long",
+                    "store": "yes",
+                    "index": "not_analyzed"
+                },
+                "review_time": {
+                    "type": "long",
+                    "store": "yes",
+                    "index": "not_analyzed"
+                },
+                "review_end_reason": {
+                    "type": "string",
+                    "store": "yes",
+                    "index": "not_analyzed"
+                },
+                "review_result": {
+                    "type": "string",
+                    "store": "yes",
+                    "index": "not_analyzed"
+                },
+                "review_type": {
+                    "type": "string",
+                    "store": "yes",
+                    "index": "not_analyzed"
+                },
+                "component": {
+                    "type": "string",
+                    "store": "yes",
+                    "index": "not_analyzed"
+                },
+                "product": {
+                    "type": "string",
+                    "store": "yes",
+                    "index": "not_analyzed"
+                },
+                "is_first": {
+                    "type": "boolean",
+                    "store": "yes",
+                    "index": "not_analyzed"
+                },
+                "requester_review_num": {
+                    "type": "integer",
+                    "store": "yes",
+                    "index": "not_analyzed"
+                }
+            }
+        }
+    }
+}
+

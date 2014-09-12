@@ -8,11 +8,12 @@
 #
 
 from __future__ import unicode_literals
+from __future__ import division
+
 from datetime import datetime
 import re
 import time
 import requests
-from ..queries import Q
 
 from ..maths.randoms import Random
 from ..thread.threads import ThreadedQueue
@@ -22,12 +23,13 @@ from ..env.logs import Log
 from ..struct import nvl, Null
 from ..structs.wraps import wrap, unwrap
 from ..struct import Struct, StructList
+from util.collections import OR
 
 
 DEBUG = False
 
 
-class ElasticSearch(object):
+class Index(object):
     """
     AN ElasticSearch INDEX LIFETIME MANAGEMENT TOOL
 
@@ -41,200 +43,72 @@ class ElasticSearch(object):
     SUFFIX (YYYYMMDD-HHMMSS) TO TRACK AGE AND RELATIONSHIP TO THE ALIAS,
     IF ANY YET.
 
-    THIS CLASS IS A CONFUSING MIX OF ES CONTAINER MANAGEMENT AND ES INDEX
-    MANIPULATION
-
     """
-    def __init__(self, settings=None):
+
+    def __init__(self, settings):
         """
         settings.explore_metadata == True - IF PROBING THE CLUSTER FOR METATDATA IS ALLOWED
         settings.timeout == NUMBER OF SECONDS TO WAIT FOR RESPONSE, OR SECONDS TO WAIT FOR DOWNLOAD (PASSED TO requests)
         """
+        if settings.index == settings.alias:
+            Log.error("must have a unique index name")
 
-        if settings is None:
-            self.debug = DEBUG
-            return
-
-        settings = wrap(settings).copy()
-        assert settings.host
+        settings = wrap(settings)
         assert settings.index
         assert settings.type
         settings.setdefault("explore_metadata", True)
 
-        if settings.index == settings.alias:
-            Log.error("must have a unique index name")
-        self.cluster_metadata = None
-        settings.port = nvl(settings.port, 9200)
         self.debug = nvl(settings.debug, DEBUG)
+        globals()["DEBUG"] = OR(self.debug, DEBUG)
         self.settings = settings
+        self.cluster = Cluster(settings)
 
-        if settings.alias == None:
-            aliases = self.get_aliases()
-            found_index = Q.sort([a for a in aliases if a.index == settings.index]).last()
-            if found_index:
-                settings.alias = found_index.alias
-            else:
-                found_index = Q.sort([a for a in aliases if a.alias == settings.index]).last()
-                if found_index:
-                    settings.alias = found_index.alias
-                    settings.index = found_index.index
+        try:
+            index = self.get_index(settings.index)
+            if index:
+                settings.alias = settings.index
+                settings.index = index
+        except Exception, e:
+            # EXPLORING (get_metadata()) IS NOT ALLOWED ON THE PUBLIC CLUSTER
+            pass
 
-        self.path = settings.host + ":" + unicode(settings.port) + "/" + settings.index + "/" + settings.type
-
-
-    @staticmethod
-    def get_or_create_index(settings, schema=None, limit_replicas=None):
-        es = ElasticSearch(settings)
-        aliases = es.get_aliases()
-        # FIX SETTINGS
-        if settings.alias == None and not re.match(".*\\d{8}_\\d{6}", settings.index):
-            settings.alias = settings.index
-            settings.index = ElasticSearch.proto_name(settings.alias)
-        elif settings.alias != None and settings.index == None:
-            settings.index = es.get_index(settings.alias)
-
-        if settings.alias in aliases.alias:
-            settings.index = Q.sort([a for a in aliases if a.alias == settings.alias]).last().index
-            return es
-        if settings.alias in aliases.index:
-            #JUST IN CASE THERE IS NON-CONVENTION
-            settings.index = settings.alias
-            return es
-
-        es = ElasticSearch.create_index(settings, schema, limit_replicas=limit_replicas)
-        return es
-
-
-    @staticmethod
-    def create_index(settings, schema=None, limit_replicas=None):
-        """
-        CREATE AN INDEX WITH REQUIRED NAME FORMAT.  DO NOT CREATE ALIAS.
-        """
-        # FIX SETTINGS
-        if settings.alias == None and not re.match(".*\\d{8}_\\d{6}", settings.index):
-            settings.alias = settings.index
-            settings.index = ElasticSearch.proto_name(settings.alias)
-        elif settings.alias != None and settings.index == None:
-            settings.index = ElasticSearch.proto_name(settings.alias)
-        else:
-            existing_index = ElasticSearch(settings).get_index(settings.alias)
-            if existing_index == settings.index:
-                Log.error("Index ({{index_name}}) already exists", {"index_name": settings.index})
-            else:
-                pass
-
-        # GET THE SCHEMA
-        if not schema and settings.schema_file:
-            from .files import File
-
-            schema = CNV.JSON2object(File(settings.schema_file).read(), flexible=True, paths=True)
-        elif isinstance(schema, basestring):
-            schema = CNV.JSON2object(schema, paths=True)
-        else:
-            schema = CNV.JSON2object(CNV.object2JSON(schema), paths=True)
-
-        limit_replicas = nvl(limit_replicas, settings.limit_replicas)
-
-        if limit_replicas:
-            # DO NOT ASK FOR TOO MANY REPLICAS
-            health = DUMMY.get(settings.host + ":" + unicode(settings.port) + "/_cluster/health")
-            if schema.settings.index.number_of_replicas >= health.number_of_nodes:
-                Log.warning("Reduced number of replicas: {{from}} requested, {{to}} realized", {
-                    "from": schema.settings.index.number_of_replicas,
-                    "to": health.number_of_nodes-1
-                })
-                schema.settings.index.number_of_replicas = health.number_of_nodes-1
-
-        DUMMY._post(
-            settings.host + ":" + unicode(settings.port) + "/" + settings.index,
-            data=CNV.object2JSON(schema).encode("utf8"),
-            headers={"Content-Type": "application/json"}
-        )
-        time.sleep(2)
-
-        es = ElasticSearch(settings)
-        return es
-
-    @staticmethod
-    def delete_index(settings, index=None):
-        index = nvl(index, settings.index)
-
-        DUMMY.delete(
-            settings.host + ":" + unicode(settings.port) + "/" + index,
-        )
-
-    def get_aliases(self):
-        """
-        RETURN LIST OF {"alias":a, "index":i} PAIRS
-        ALL INDEXES INCLUDED, EVEN IF NO ALIAS {"alias":Null}
-        """
-        data = self.get_metadata().indices
-        output = []
-        for index, desc in data.items():
-            if not desc["aliases"]:
-                output.append({"index": index, "alias": None})
-            else:
-                for a in desc["aliases"]:
-                    output.append({"index": index, "alias": a})
-        return wrap(output)
-
-    def get_metadata(self):
-        if self.settings.explore_metadata:
-            if not self.cluster_metadata:
-                response = self.get(self.settings.host + ":" + unicode(self.settings.port) + "/_cluster/state")
-                self.cluster_metadata = response.metadata
-                self.node_metatdata = self.get(self.settings.host + ":" + unicode(self.settings.port) + "/")
-        else:
-            Log.error("Metadata exploration has been disabled")
-        return self.cluster_metadata
+        self.path = "/" + settings.index + "/" + settings.type
 
 
     def get_schema(self):
         if self.settings.explore_metadata:
-            indices = self.get_metadata().indices
+            indices = self.cluster.get_metadata().indices
             index = indices[self.settings.index]
             if not index.mappings[self.settings.type]:
                 Log.error("ElasticSearch index ({{index}}) does not have type ({{type}})", self.settings)
             return index.mappings[self.settings.type]
         else:
-            mapping = self.get(self.settings.host + ":" + unicode(self.settings.port) + "/" + self.settings.index +"/" + self.settings.type + "/_mapping")
+            mapping = self.cluster.get(self.path + "/_mapping")
             if not mapping[self.settings.type]:
                 Log.error("{{index}} does not have type {{type}}", self.settings)
-            return wrap({"mappings":mapping[self.settings.type]})
+            return wrap({"mappings": mapping[self.settings.type]})
 
-    # DELETE ALL INDEXES WITH GIVEN PREFIX, EXCEPT name
-    def delete_all_but(self, prefix=None, index=None):
-        if not prefix:
-            prefix = self.settings.alias
-        if not index:
-            index = self.settings.index
+    def delete_all_but_self(self):
+        """
+        DELETE ALL INDEXES WITH GIVEN PREFIX, EXCEPT name
+        """
+        prefix = self.settings.alias
+        name = self.settings.index
 
-        if prefix == index:
+        if prefix == name:
             Log.note("{{index_name}} will not be deleted", {"index_name": prefix})
-        for a in self.get_aliases():
+        for a in self.cluster.get_aliases():
             # MATCH <prefix>YYMMDD_HHMMSS FORMAT
-            if re.match(re.escape(prefix) + "\\d{8}_\\d{6}", a.index) and a.index != index:
-                ElasticSearch.delete_index(self.settings, a.index)
+            if re.match(re.escape(prefix) + "\\d{8}_\\d{6}", a.index) and a.index != name:
+                self.cluster.delete_index(a.index)
 
-    @staticmethod
-    def proto_name(prefix, timestamp=None):
-        if not timestamp:
-            timestamp = datetime.utcnow()
-        return prefix + CNV.datetime2string(timestamp, "%Y%m%d_%H%M%S")
-
-    def add_alias(self, alias=None):
-        if not alias:
-            if not self.settings.alias:
-                Log.error("Expewcting an alias")
-            else:
-                alias = self.settings.alias
-
+    def add_alias(self):
         self.cluster_metadata = None
-        requests.post(
-            self.settings.host + ":" + unicode(self.settings.port) + "/_aliases",
+        self.cluster._post(
+            "/_aliases",
             CNV.object2JSON({
                 "actions": [
-                    {"add": {"index": self.settings.index, "alias": alias}}
+                    {"add": {"index": self.settings.index, "alias": self.settings.alias}}
                 ]
             }),
             timeout=nvl(self.settings.timeout, 30)
@@ -247,7 +121,7 @@ class ElasticSearch(object):
         """
         output = sort([
             a.index
-            for a in self.get_aliases()
+            for a in self.cluster.get_aliases()
             if re.match(re.escape(alias) + "\\d{8}_\\d{6}", a.index) and not a.alias
         ])
         return output
@@ -258,7 +132,7 @@ class ElasticSearch(object):
         """
         output = sort([
             a.index
-            for a in self.get_aliases()
+            for a in self.cluster.get_aliases()
             if a.alias == alias
         ])
         if len(output) > 1:
@@ -273,16 +147,16 @@ class ElasticSearch(object):
         """
         RETURN True IF THIS INDEX HAS NOT BEEN ASSIGNED ITS ALIAS
         """
-        for a in self.get_aliases():
+        for a in self.cluster.get_aliases():
             if a.index == index and a.alias:
                 return False
         return True
 
     def delete_record(self, filter):
-        self.get_metadata()
-        if self.node_metatdata.version.number.startswith("0.90"):
+        self.cluster.get_metadata()
+        if self.cluster.node_metatdata.version.number.startswith("0.90"):
             query = filter
-        elif self.node_metatdata.version.number.startswith("1.0"):
+        elif self.cluster.node_metatdata.version.number.startswith("1.0"):
             query = {"query": filter}
         else:
             raise NotImplementedError
@@ -290,7 +164,7 @@ class ElasticSearch(object):
         if self.debug:
             Log.note("Delete bugs:\n{{query}}", {"query": query})
 
-        self.delete(
+        self.cluster.delete(
             self.path + "/_query",
             data=CNV.object2JSON(query)
         )
@@ -329,7 +203,7 @@ class ElasticSearch(object):
             except Exception, e:
                 Log.error("can not make request body from\n{{lines|indent}}", {"lines": lines}, e)
 
-            response = self._post(
+            response = self.cluster._post(
                 self.path + "/_bulk",
                 data=data_bytes,
                 headers={"Content-Type": "text"},
@@ -345,7 +219,7 @@ class ElasticSearch(object):
                     })
 
             if self.debug:
-                Log.note("{{num}} items added", {"num": len(lines) / 2})
+                Log.note("{{num}} items added", {"num": int(len(lines) / 2)})
         except Exception, e:
             if e.message.startswith("sequence item "):
                 Log.error("problem with {{data}}", {"data": repr(lines[int(e.message[14:16].strip())])}, e)
@@ -366,9 +240,8 @@ class ElasticSearch(object):
         else:
             interval = unicode(seconds) + "s"
 
-        response = self.put(
-            self.settings.host + ":" + unicode(
-                self.settings.port) + "/" + self.settings.index + "/_settings",
+        response = self.cluster.put(
+            "/" + self.settings.index + "/_settings",
             data="{\"index.refresh_interval\":\"" + interval + "\"}"
         )
 
@@ -388,7 +261,7 @@ class ElasticSearch(object):
                 else:
                     show_query = query
                 Log.note("Query:\n{{query|indent}}", {"query": show_query})
-            return self._post(
+            return self.cluster._post(
                 self.path + "/_search",
                 data=CNV.object2JSON(query).encode("utf8"),
                 timeout=nvl(timeout, self.settings.timeout)
@@ -402,47 +275,156 @@ class ElasticSearch(object):
     def threaded_queue(self, size=None, period=None):
         return ThreadedQueue(self, size=size, period=period)
 
-    def _post(self, *args, **kwargs):
+    def delete(self):
+        self.cluster.delete_index(index=self.settings.index)
+
+
+class Cluster(object):
+    def __init__(self, settings):
+        """
+        settings.explore_metadata == True - IF PROBING THE CLUSTER FOR METATDATA IS ALLOWED
+        settings.timeout == NUMBER OF SECONDS TO WAIT FOR RESPONSE, OR SECONDS TO WAIT FOR DOWNLOAD (PASSED TO requests)
+        """
+
+        settings = wrap(settings)
+        assert settings.host
+        settings.setdefault("explore_metadata", True)
+
+        self.cluster_metadata = None
+        settings.setdefault("port", 9200)
+        self.debug = nvl(settings.debug, DEBUG)
+        self.settings = settings
+        self.path = settings.host + ":" + unicode(settings.port)
+
+    def get_or_create_index(self, settings, schema=None, limit_replicas=None):
+        aliases = self.get_aliases()
+        indexes = [a for a in aliases if a.alias == settings.index or a.index == settings.index]
+        if not indexes:
+            self.create_index(settings, schema, limit_replicas=limit_replicas)
+        elif len(indexes) > 1:
+            Log.error("More than one match")
+        elif indexes[0].alias != None:
+            settings.alias = indexes[0].alias
+            settings.index = indexes[0].index
+        return Index(settings)
+
+    def get_index(self, settings):
+        """
+        TESTS THAT THE INDEX EXISTS BEFORE RETURNING A HANDLE
+        """
+        aliases = self.get_aliases()
+        if settings.index in aliases.index:
+            return Index(settings)
+        if settings.index in aliases.alias:
+            match = [a for a in aliases if a.alias == settings.index][0]
+            settings.alias = match.alias
+            settings.index = match.index
+            return Index(settings)
+        Log.error("Can not find index {{index_name}}", {"index_name": settings.index})
+
+    def create_index(self, settings, schema=None, limit_replicas=None):
+        if not settings.alias:
+            settings.alias = settings.index
+            settings.index = proto_name(settings.alias)
+
+        if settings.alias==settings.index:
+            Log.error("Expecting index name to conform to pattern")
+
+        if not schema and settings.schema_file:
+            from .files import File
+
+            schema = CNV.JSON2object(File(settings.schema_file).read(), flexible=True, paths=True)
+        elif isinstance(schema, basestring):
+            schema = CNV.JSON2object(schema, paths=True)
+        else:
+            schema = CNV.JSON2object(CNV.object2JSON(schema), paths=True)
+
+        limit_replicas = nvl(limit_replicas, settings.limit_replicas)
+
+        if limit_replicas:
+            # DO NOT ASK FOR TOO MANY REPLICAS
+            health = self.get("/_cluster/health")
+            if schema.settings.index.number_of_replicas >= health.number_of_nodes:
+                Log.warning("Reduced number of replicas: {{from}} requested, {{to}} realized", {
+                    "from": schema.settings.index.number_of_replicas,
+                    "to": health.number_of_nodes - 1
+                })
+                schema.settings.index.number_of_replicas = health.number_of_nodes - 1
+
+        self._post(
+            "/" + settings.index,
+            data=CNV.object2JSON(schema).encode("utf8"),
+            headers={"Content-Type": "application/json"}
+        )
+        time.sleep(2)
+        es = Index(settings)
+        return es
+
+    def delete_index(self, index=None):
+        self.delete("/" + index)
+
+    def get_aliases(self):
+        """
+        RETURN LIST OF {"alias":a, "index":i} PAIRS
+        ALL INDEXES INCLUDED, EVEN IF NO ALIAS {"alias":Null}
+        """
+        data = self.get_metadata().indices
+        output = []
+        for index, desc in data.items():
+            if not desc["aliases"]:
+                output.append({"index": index, "alias": None})
+            else:
+                for a in desc["aliases"]:
+                    output.append({"index": index, "alias": a})
+        return wrap(output)
+
+    def get_metadata(self):
+        if self.settings.explore_metadata:
+            if not self.cluster_metadata:
+                response = self.get("/_cluster/state")
+                self.cluster_metadata = response.metadata
+                self.node_metatdata = self.get("/")
+        else:
+            Log.error("Metadata exploration has been disabled")
+        return self.cluster_metadata
+
+    def _post(self, path, *args, **kwargs):
         if "data" in kwargs and not isinstance(kwargs["data"], str):
             Log.error("data must be utf8 encoded string")
+
+        url = self.settings.host + ":" + unicode(self.settings.port) + path
 
         try:
             kwargs = wrap(kwargs)
             kwargs.setdefault("timeout", 600)
             kwargs.headers["Accept-Encoding"] = "gzip,deflate"
-            kwargs.headers["Accept-Charset"] = "UTF-8"
             kwargs = unwrap(kwargs)
-            response = requests.post(*args, **kwargs)
-            content = response.content
+            response = requests.post(url, *args, **kwargs)
             if self.debug:
-                Log.note(content.decode("utf-8")[:130])
-            details = CNV.JSON2object(content.decode("utf-8"))
+                Log.note(response.content.decode("utf-8")[:130])
+            details = CNV.JSON2object(response.content.decode("utf-8"))
             if details.error:
                 Log.error(CNV.quote2string(details.error))
             if details._shards.failed > 0:
                 Log.error("Shard failure")
             return details
         except Exception, e:
-            for i, c in enumerate(content):
-                try:
-                    temp=c.decode("utf-8")
-                except Exception, f:
-                    Log.error(c)
-            if args[0][0:4] != "http":
+            if url[0:4] != "http":
                 suggestion = " (did you forget \"http://\" prefix on the host name?)"
             else:
                 suggestion = ""
 
-            Log.error("Problem with call to {{url}}" + suggestion +"\n{{body}}", {
-                "url": args[0],
+            Log.error("Problem with call to {{url}}" + suggestion + "\n{{body}}", {
+                "url": url,
                 "body": kwargs["data"] if DEBUG else kwargs["data"][0:100]
             }, e)
 
-    def get(self, *args, **kwargs):
+    def get(self, path, **kwargs):
+        url = self.settings.host + ":" + unicode(self.settings.port) + path
         try:
             kwargs = wrap(kwargs)
             kwargs.setdefault("timeout", 600)
-            response = requests.get(*args, **kwargs)
+            response = requests.get(url, **kwargs)
             if self.debug:
                 Log.note(response.content.decode("utf-8")[:130])
             details = wrap(CNV.JSON2object(response.content.decode("utf-8")))
@@ -450,38 +432,50 @@ class ElasticSearch(object):
                 Log.error(details.error)
             return details
         except Exception, e:
-            Log.error("Problem with call to {{url}}", {"url": args[0]}, e)
+            Log.error("Problem with call to {{url}}", {"url": url}, e)
 
-    def put(self, *args, **kwargs):
+    def put(self, path, *args, **kwargs):
+        url = self.settings.host + ":" + unicode(self.settings.port) + path
         try:
             kwargs = wrap(kwargs)
             kwargs.setdefault("timeout", 60)
-            response = requests.put(*args, **kwargs)
+            response = requests.put(url, *args, **kwargs)
             if self.debug:
                 Log.note(response.content.decode("utf-8"))
             return response
         except Exception, e:
-            Log.error("Problem with call to {{url}}", {"url": args[0]}, e)
+            Log.error("Problem with call to {{url}}", {"url": url}, e)
 
-    def delete(self, *args, **kwargs):
+    def delete(self, path, *args, **kwargs):
+        url = self.settings.host + ":" + unicode(self.settings.port) + path
         try:
             kwargs.setdefault("timeout", 60)
-            response = requests.delete(*args, **kwargs)
+            response = requests.delete(url, **kwargs)
             if self.debug:
                 Log.note(response.content.decode("utf-8"))
             return response
         except Exception, e:
-            Log.error("Problem with call to {{url}}", {"url": args[0]}, e)
+            Log.error("Problem with call to {{url}}", {"url": url}, e)
 
-    @staticmethod
-    def scrub(r):
-        """
-        REMOVE KEYS OF DEGENERATE VALUES (EMPTY STRINGS, EMPTY LISTS, AND NULLS)
-        TO LOWER CASE
-        CONVERT STRINGS OF NUMBERS TO NUMBERS
-        RETURNS **COPY**, DOES NOT CHANGE ORIGINAL
-        """
-        return wrap(_scrub(r))
+
+def proto_name(prefix, timestamp=None):
+    if not timestamp:
+        timestamp = datetime.utcnow()
+    return prefix + CNV.datetime2string(timestamp, "%Y%m%d_%H%M%S")
+
+
+def sort(values):
+    return wrap(sorted(values))
+
+
+def scrub(r):
+    """
+    REMOVE KEYS OF DEGENERATE VALUES (EMPTY STRINGS, EMPTY LISTS, AND NULLS)
+    TO LOWER CASE
+    CONVERT STRINGS OF NUMBERS TO NUMBERS
+    RETURNS **COPY**, DOES NOT CHANGE ORIGINAL
+    """
+    return wrap(_scrub(r))
 
 
 def _scrub(r):
@@ -525,9 +519,3 @@ def _scrub(r):
         Log.warning("Can not scrub: {{json}}", {"json": r})
 
 
-
-def sort(values):
-    return wrap(sorted(values))
-
-
-DUMMY = ElasticSearch()

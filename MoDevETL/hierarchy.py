@@ -15,7 +15,7 @@ from MoDevETL.util.cnv import CNV
 from MoDevETL.util.collections import MAX
 from MoDevETL.util.collections.relation import Relation
 from MoDevETL.util.env import startup
-from MoDevETL.util.env.elasticsearch import ElasticSearch
+from MoDevETL.util.env.elasticsearch import Cluster, Index
 from MoDevETL.util.env.logs import Log
 from MoDevETL.util.queries import Q
 from MoDevETL.util.queries.es_query import ESQuery
@@ -57,18 +57,14 @@ def push_to_es(settings, data, dirty):
             "descendants": Q.sort(d)
         }})
 
-    dest = ElasticSearch(settings.destination)
+    dest = Index(settings.destination)
     for g, r in Q.groupby(records, size=200):
         with Timer("Push {{num}} records to ES", {"num": len(r)}):
             dest.extend(r)
 
 
 def full_etl(settings):
-    dest = ElasticSearch(settings.destination)
-    aliases = dest.get_aliases()
-    if settings.destination.index not in aliases.index:
-        dest = ElasticSearch.create_index(settings.destination, CNV.JSON2object(CNV.object2JSON(SCHEMA), paths=True), limit_replicas=True)
-
+    dest = Cluster(settings.destination).get_or_create_index(settings.destination, CNV.JSON2object(CNV.object2JSON(SCHEMA), paths=True), limit_replicas=True)
     destq = ESQuery(dest)
     min_bug_id = destq.query({
         "from": nvl(settings.destination.alias, settings.destination.index),
@@ -77,7 +73,7 @@ def full_etl(settings):
     min_bug_id = MAX(min_bug_id-1000, 0)
     # min_bug_id = 880000
 
-    source = ElasticSearch(settings.source)
+    source = Index(settings.source)
     sourceq = ESQuery(source)
     max_bug_id = sourceq.query({
         "from": nvl(settings.source.alias, settings.source.index),

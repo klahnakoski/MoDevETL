@@ -229,7 +229,6 @@ def main():
         threads = nvl(settings.threads, 4)
 
         min_bug = Math.max(0, Math.floor(Math.min(min_bug+ size*threads, max_bug), size))
-        min_bug = 1000
 
         with ThreadedQueue(reviews, size=size) as sink:
             func = functools.partial(full_etl, settings, sink)

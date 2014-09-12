@@ -9,10 +9,12 @@
 #
 
 from __future__ import unicode_literals
+from __future__ import division
+
 import functools
 from ..collections import MIN
 from ..env.logs import Log
-from ..struct import nvl, split_field, StructList, Struct, join_field
+from ..struct import nvl, split_field, StructList, Struct
 from ..structs.wraps import wrap
 
 

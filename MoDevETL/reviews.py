@@ -12,13 +12,12 @@ from __future__ import unicode_literals
 import functools
 from MoDevETL.util.cnv import CNV
 
-from MoDevETL.util.env import startup
-from MoDevETL.util.env.elasticsearch import ElasticSearch
+from MoDevETL.util.env import startup, elasticsearch
+from MoDevETL.util.env.elasticsearch import Cluster
 from MoDevETL.util.env.logs import Log
 from MoDevETL.util.maths import Math
-from MoDevETL.util.queries import Q
+from MoDevETL.util.queries import Q, index
 from MoDevETL.util.queries.es_query import ESQuery
-from MoDevETL.util.queries.index import Index
 from MoDevETL.util.struct import nvl
 from MoDevETL.util.thread.multithread import Multithread
 from MoDevETL.util.thread.threads import ThreadedQueue
@@ -34,7 +33,7 @@ TYPES = ["review", "superreview", "ui-review"]
 
 
 def full_etl(settings, sink, bugs):
-    es = ElasticSearch(settings.source)
+    es = elasticsearch.Index(settings.source)
     with ESQuery(es) as esq:
         versions = esq.query({
             "from": "bugs",
@@ -165,7 +164,7 @@ def full_etl(settings, sink, bugs):
 
 
     reviews = []
-    ends = Index(ends, keys=["bug_id", "attach_id", "request_type", "reviewer"])
+    ends = index.Index(ends, keys=["bug_id", "attach_id", "request_type", "reviewer"])
 
     for g, s in Q.groupby(starts, ["bug_id", "attach_id", "request_type", "reviewer"]):
         start_candidates = Q.sort(s, {"value": "request_time", "sort": 1})
@@ -210,8 +209,8 @@ def main():
     settings = startup.read_settings()
     Log.start(settings.debug)
     try:
-        reviews = ElasticSearch.create_index(settings.destination)
-        bugs = ElasticSearch(settings.source)
+        reviews = Cluster(settings.destination).create_index(settings.destination)
+        bugs = Cluster(settings.source).get_index(settings.source)
 
         with ESQuery(bugs) as esq:
             max_bug = esq.query({
@@ -238,7 +237,7 @@ def main():
                 m.execute(reversed([{"bugs": xrange(s, e)} for s, e in Q.intervals(0, min_bug, size=1000)]))
 
         reviews.add_alias()
-        reviews.delete_all_but()
+        reviews.delete_all_but_self()
     finally:
         Log.stop()
 

@@ -8,6 +8,8 @@
 # Author: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 from __future__ import unicode_literals
+from __future__ import division
+
 from ..collections import OR
 from ..structs.wraps import wrap
 
@@ -61,7 +63,7 @@ def _normalize(esfilter):
             output = []
             for a in esfilter["and"]:
                 if isinstance(a, (list, set)):
-                    from dzAlerts.util.env.logs import Log
+                    from ..env.logs import Log
                     Log.error("and clause is not allowed a list inside a list")
                 a_ = normalize(a)
                 if a_ is not a:

@@ -11,6 +11,7 @@
 
 from datetime import datetime, timedelta
 from MoDevETL.util.collections import MIN, UNION
+from MoDevETL.util.env.elasticsearch import Cluster, Index
 from MoDevETL.util.struct import nvl
 from MoDevETL.util.thread.threads import ThreadedQueue
 from MoDevETL.util.times.timer import Timer
@@ -20,7 +21,6 @@ from MoDevETL.util.queries import Q
 from MoDevETL.util.env import startup
 from MoDevETL.util.env.files import File
 from MoDevETL.util.collections.multiset import Multiset
-from MoDevETL.util.env.elasticsearch import ElasticSearch
 
 
 # REPLICATION
@@ -104,25 +104,6 @@ def get_pending(es, since):
     return pending_bugs
 
 
-# USE THE source TO GET THE INDEX SCHEMA
-def get_or_create_index(destination_settings, source):
-    #CHECK IF INDEX, OR ALIAS, EXISTS
-    es = ElasticSearch(destination_settings)
-    aliases = es.get_aliases()
-
-    indexes = [a for a in aliases if a.alias == destination_settings.index or a.index == destination_settings.index]
-    if not indexes:
-        #CREATE INDEX
-        Log.error("Expecting an index")
-    elif len(indexes) > 1:
-        Log.error("do not know how to replicate to more than one index")
-    elif indexes[0].alias != None:
-        destination_settings.alias = indexes[0].alias
-        destination_settings.index = indexes[0].index
-
-    return ElasticSearch(destination_settings)
-
-
 def replicate(source, destination, pending, last_updated):
     """
     COPY THE DEPENDENCY RECORDS TO THE destination
@@ -201,8 +182,8 @@ def main(settings):
     time_file = File(settings.param.last_replication_time)
 
     # SYNCH WITH source ES INDEX
-    source = ElasticSearch(settings.source)
-    destination = get_or_create_index(settings["destination"], source)
+    source = Index(settings.source)
+    destination = Cluster(settings.destination).get_or_create_index(settings.destination)
 
     # GET LAST UPDATED
     from_file = None

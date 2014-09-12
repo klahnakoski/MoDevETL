@@ -7,7 +7,8 @@
         "debug": true
     },
     "destination": {
-	    "host": "http://klahnakoski-es.corp.tor1.mozilla.com",
+	    "host":"http://localhost",
+//	    "host": "http://klahnakoski-es.corp.tor1.mozilla.com",
 //        "host": "http://elasticsearch-private.bugs.scl3.mozilla.com",
         "port": "9200",
         "index": "reviews",

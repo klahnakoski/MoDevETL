@@ -8,17 +8,19 @@
 # Author: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 from __future__ import unicode_literals
+from __future__ import division
+
 from datetime import datetime
 
 from .. import struct
-from MoDevETL.util.queries import MVEL, domains, filters, INDEX_CACHE
 from ..cnv import CNV
 from .. import strings
 from ..collections import COUNT
 from ..maths import stats
-from ..env.elasticsearch import ElasticSearch
+from ..env.elasticsearch import Index
 from ..env.logs import Log
 from ..maths import Math
+from ..queries import domains, MVEL, filters
 from ..struct import nvl, StructList, Struct, split_field, join_field
 from ..structs.wraps import wrap
 from ..times import durations
@@ -26,6 +28,8 @@ from ..times import durations
 
 TrueFilter = {"match_all": {}}
 DEBUG = False
+
+INDEX_CACHE = {}  # MATCH NAMES TO FULL CONNECTION INFO
 
 
 def loadColumns(es, frum):
@@ -57,7 +61,7 @@ def loadColumns(es, frum):
         if k != "name" and v != frum[k]:
             diff = True
     if diff:
-        es = ElasticSearch(frum)
+        es = Index(frum)
 
     output = wrap(frum).copy()
     schema = es.get_schema()
@@ -493,3 +497,4 @@ aggregates = {
     "var": "variance",
     "variance": "variance"
 }
+

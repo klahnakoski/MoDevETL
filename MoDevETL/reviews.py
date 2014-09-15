@@ -208,36 +208,38 @@ def full_etl(settings, sink, bugs):
 def main():
     settings = startup.read_settings()
     Log.start(settings.debug)
+
     try:
-        reviews = Cluster(settings.destination).create_index(settings.destination)
-        bugs = Cluster(settings.source).get_index(settings.source)
+        with startup.SingleInstance():
+            reviews = Cluster(settings.destination).create_index(settings.destination)
+            bugs = Cluster(settings.source).get_index(settings.source)
 
-        with ESQuery(bugs) as esq:
-            max_bug = esq.query({
-                "from": "private_bugs",
-                "select": {"name": "max_bug", "value": "bug_id", "aggregate": "maximum"}
-            })
+            with ESQuery(bugs) as esq:
+                max_bug = esq.query({
+                    "from": "private_bugs",
+                    "select": {"name": "max_bug", "value": "bug_id", "aggregate": "maximum"}
+                })
 
-        #PROBE WHAT RANGE OF BUGS IS LEFT TO DO (IN EVENT OF FAILURE)
-        with ESQuery(reviews) as esq:
-            min_bug = esq.query({
-                "from": "reviews",
-                "select": {"name": "min_bug", "value": "bug_id", "aggregate": "minimum"}
-            })
+            #PROBE WHAT RANGE OF BUGS IS LEFT TO DO (IN EVENT OF FAILURE)
+            with ESQuery(reviews) as esq:
+                min_bug = esq.query({
+                    "from": "reviews",
+                    "select": {"name": "min_bug", "value": "bug_id", "aggregate": "minimum"}
+                })
 
-        size = nvl(settings.size, 1000)
-        threads = nvl(settings.threads, 4)
+            size = nvl(settings.size, 1000)
+            threads = nvl(settings.threads, 4)
 
-        min_bug = Math.max(0, Math.floor(Math.min(min_bug+ size*threads, max_bug), size))
+            min_bug = Math.max(0, Math.floor(Math.min(min_bug+ size*threads, max_bug), size))
 
-        with ThreadedQueue(reviews, size=size) as sink:
-            func = functools.partial(full_etl, settings, sink)
-            with Multithread(func, threads=threads) as m:
-                m.inbound.silent = True
-                m.execute(reversed([{"bugs": xrange(s, e)} for s, e in Q.intervals(0, min_bug, size=1000)]))
+            with ThreadedQueue(reviews, size=size) as sink:
+                func = functools.partial(full_etl, settings, sink)
+                with Multithread(func, threads=threads) as m:
+                    m.inbound.silent = True
+                    m.execute(reversed([{"bugs": xrange(s, e)} for s, e in Q.intervals(0, min_bug, size=1000)]))
 
-        reviews.add_alias()
-        reviews.delete_all_but_self()
+            reviews.add_alias()
+            reviews.delete_all_but_self()
     finally:
         Log.stop()
 

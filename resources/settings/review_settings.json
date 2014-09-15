@@ -27,7 +27,7 @@
             },
             {
                 "class": "logging.handlers.RotatingFileHandler",
-                "filename": "./results/logs/hierarchy_etl.log",
+                "filename": "./results/logs/review_etl.log",
                 "maxBytes": 10000000,
                 "backupCount": 3,
                 "encoding": "utf8"
@@ -36,7 +36,7 @@
                 "log_type": "elasticsearch",
                 "host": "http://elasticsearch5.bugs.scl3.mozilla.com",
                 "index": "debug",
-                "type": "hierarchy_etl"
+                "type": "review_etl"
             }
         ]
     }

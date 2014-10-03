@@ -210,7 +210,7 @@ def main():
     Log.start(settings.debug)
 
     try:
-        with startup.SingleInstance():
+        with startup.SingleInstance(flavor_id=settings.args.filename):
             reviews = Cluster(settings.destination).create_index(settings.destination)
             bugs = Cluster(settings.source).get_index(settings.source)
 

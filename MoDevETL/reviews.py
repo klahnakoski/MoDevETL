@@ -181,6 +181,7 @@ def full_etl(settings, sink, bugs):
 
             s.review_time = e.modified_ts
             s.review_result = e.review_result
+            s.review_end_reason = e.review_end_reason
             s.product = nvl(e.product, s.product)
             s.component = nvl(e.component, s.component)
             s.requester_review_num = -1
@@ -215,28 +216,34 @@ def main():
             bugs = Cluster(settings.source).get_index(settings.source)
 
             with ESQuery(bugs) as esq:
-                max_bug = esq.query({
+                es_max_bug = esq.query({
                     "from": "private_bugs",
                     "select": {"name": "max_bug", "value": "bug_id", "aggregate": "maximum"}
                 })
 
             #PROBE WHAT RANGE OF BUGS IS LEFT TO DO (IN EVENT OF FAILURE)
             with ESQuery(reviews) as esq:
-                min_bug = esq.query({
+                es_min_bug = esq.query({
                     "from": "reviews",
                     "select": {"name": "min_bug", "value": "bug_id", "aggregate": "minimum"}
                 })
 
             size = nvl(settings.size, 1000)
             threads = nvl(settings.threads, 4)
-
-            min_bug = Math.max(0, Math.floor(Math.min(min_bug+ size*threads, max_bug), size))
+            Log.note(str(settings.min_bug))
+            min_bug = int(nvl(settings.min_bug, 0))
+            max_bug = int(nvl(settings.max_bug, Math.min(es_min_bug+ size*threads, es_max_bug)))
 
             with ThreadedQueue(reviews, size=size) as sink:
                 func = functools.partial(full_etl, settings, sink)
                 with Multithread(func, threads=threads) as m:
                     m.inbound.silent = True
-                    m.execute(reversed([{"bugs": xrange(s, e)} for s, e in Q.intervals(0, min_bug, size=1000)]))
+                    Log.note("bugs from {{min}} to {{max}}, step {{step}}", {
+                        "min": min_bug,
+                        "max": max_bug,
+                        "step": size
+                    } )
+                    m.execute(reversed([{"bugs": xrange(s, e)} for s, e in Q.intervals(min_bug, max_bug, size=1000)]))
 
             reviews.add_alias()
             reviews.delete_all_but_self()

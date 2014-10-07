@@ -23,7 +23,7 @@ from ..env.logs import Log
 from ..struct import nvl, Null
 from ..structs.wraps import wrap, unwrap
 from ..struct import Struct, StructList
-from util.collections import OR
+from ..collections import OR
 
 
 DEBUG = False

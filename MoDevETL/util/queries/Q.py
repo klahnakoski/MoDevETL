@@ -29,7 +29,9 @@ from ..struct import Struct, Null, StructList
 
 
 # A COLLECTION OF DATABASE OPERATORS (RELATIONAL ALGEBRA OPERATORS)
-
+# Qb QUERY DOCUMENTATION: https://github.com/klahnakoski/Qb/tree/master/docs
+# START HERE: https://github.com/klahnakoski/Qb/blob/master/docs/Qb_Reference.md
+# TODO: USE http://docs.sqlalchemy.org/en/latest/core/tutorial.html AS DOCUMENTATION FRAMEWORK
 
 def run(query):
     query = Query(query)
@@ -697,7 +699,7 @@ def drill_filter(esfilter, data):
             main(seq, new_filter, d, depth + 1)
 
     # OUTPUT
-    for d in data:
+    for i, d in enumerate(data):
         if isinstance(d, dict):
             main([], esfilter, wrap(d), 0)
         else:

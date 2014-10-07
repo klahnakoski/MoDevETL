@@ -8,7 +8,8 @@
 # Author: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 from __future__ import unicode_literals
-from MoDevETL.util.struct import Struct, nvl
+
+from ..struct import Struct, nvl
 
 INDEX_CACHE = {}  # MATCH NAMES TO FULL CONNECTION INFO
 

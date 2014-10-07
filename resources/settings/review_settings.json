@@ -17,7 +17,7 @@
         "type": "patch_review",
         "debug": false
     },
-    "debug": {
+	"debug": {
         "profile": false,
         "trace": true,
         "log": [

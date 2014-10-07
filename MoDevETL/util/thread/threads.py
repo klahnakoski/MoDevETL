@@ -40,15 +40,21 @@ class Lock(object):
         self.monitor.notify()
         self.monitor.release()
 
+    # RETURN True IF LOCK IS NOW OWNED
     def wait(self, timeout=None, till=None):
         if till:
             timeout = (datetime.utcnow() - till).total_seconds()
             if timeout < 0:
                 return
         self.monitor.wait(timeout=float(timeout) if timeout else None)
+        return self.monitor._is_owned()   # Oh dear God!
+
 
     def notify_all(self):
         self.monitor.notify_all()
+
+    def notify(self):
+        self.monitor.notify()
 
 
 class Queue(object):
@@ -66,7 +72,7 @@ class Queue(object):
         self.keep_running = True
         self.lock = Lock("lock for queue")
         self.queue = []
-        self.next_warning=datetime.utcnow()  # FOR DEBUGGING
+
 
     def __iter__(self):
         while self.keep_running:
@@ -98,27 +104,27 @@ class Queue(object):
         """
         EXPECT THE self.lock TO BE HAD, WAITS FOR self.queue TO HAVE A LITTLE SPACE
         """
-        wait_time = 5
+        if self.silent:
+            while self.keep_running and len(self.queue) > self.max:
+                self.lock.wait()
+            return
 
+        wait_time = 5
         now = datetime.utcnow()
-        if self.next_warning < now:
-            self.next_warning = now + timedelta(seconds=wait_time)
+        next_warning = now + timedelta(seconds=wait_time)
 
         while self.keep_running and len(self.queue) > self.max:
-            if self.silent:
-                self.lock.wait()
-            else:
-                self.lock.wait(wait_time)
-                if len(self.queue) > self.max:
-                    now = datetime.utcnow()
-                    if self.next_warning < now:
-                        self.next_warning = now + timedelta(seconds=wait_time)
-                        from ..env.logs import Log
+            self.lock.wait(till=next_warning)
+            if len(self.queue) > self.max:
+                now = datetime.utcnow()
+                if next_warning < now:
+                    next_warning = now + timedelta(seconds=wait_time)
+                    from ..env.logs import Log
 
-                        Log.warning("Queue is full ({{num}}} items), thread(s) have been waiting {{wait_time}} sec", {
-                            "num": len(self.queue),
-                            "wait_time": wait_time
-                        })
+                    Log.warning("Queue is full ({{num}}} items), thread(s) have been waiting {{wait_time}} sec", {
+                        "num": len(self.queue),
+                        "wait_time": wait_time
+                    })
 
     def __len__(self):
         with self.lock:
@@ -132,7 +138,24 @@ class Queue(object):
                     if value is Thread.STOP:  # SENDING A STOP INTO THE QUEUE IS ALSO AN OPTION
                         self.keep_running = False
                     return value
-                self.lock.wait()
+
+                if self.silent:
+                    self.lock.wait()
+                else:
+                    wait_time = 5
+                    now = datetime.utcnow()
+                    next_warning = now + timedelta(seconds=wait_time)
+
+                    while self.keep_running and not self.queue:
+                        self.lock.wait(till=next_warning)
+                        if not self.queue:
+                            now = datetime.utcnow()
+                            if next_warning < now:
+                                next_warning = now + timedelta(seconds=wait_time)
+                                from ..env.logs import Log
+
+                                Log.warning("Queue is waiting for content ({{num}}} items)", {"num": len(self.queue)})
+
             return Thread.STOP
 
     def pop_all(self):
@@ -352,7 +375,7 @@ class Signal(object):
     go() - ACTIVATE SIGNAL (DOES NOTHING IF SIGNAL IS ALREADY ACTIVATED)
     wait_for_go() - PUT THREAD IN WAIT STATE UNTIL SIGNAL IS ACTIVATED
     is_go() - TEST IF SIGNAL IS ACTIVATED, DO NOT WAIT
-    on_go() - METHOD FOR OTHEr THREAD TO RUN WHEN ACTIVATING SIGNAL
+    on_go(f) - GIVE IT A f TO CALL WHEN SIGNAL IS ACTIVATED
     """
 
     def __init__(self):
@@ -420,22 +443,25 @@ class ThreadedQueue(Queue):
     DISPATCH TO ANOTHER (SLOWER) queue IN BATCHES OF GIVEN size
     """
 
-    def __init__(self, queue, size=None, max=None, period=None, silent=False):
+    DEBUG = True
+
+    def __init__(self, destination, size=None, max=None, period=None, silent=False):
         if max == None:
             # REASONABLE DEFAULT
             max = size * 2
 
         Queue.__init__(self, max=max, silent=silent)
+        self.sink = destination
 
         def size_pusher(please_stop):
             please_stop.on_go(lambda: self.add(Thread.STOP))
 
-            # queue IS A MULTI-THREADED QUEUE, SO THIS WILL BLOCK UNTIL THE size ARE READY
+            # self IS A MULTI-THREADED QUEUE, SO THIS WILL BLOCK UNTIL THE size ARE READY
             from ..queries import Q
 
             for i, g in Q.groupby(self, size=size):
                 try:
-                    queue.extend(g)
+                    destination.extend(g)
                     if please_stop:
                         from ..env.logs import Log
 
@@ -447,6 +473,10 @@ class ThreadedQueue(Queue):
                     from ..env.logs import Log
 
                     Log.warning("Problem with pushing {{num}} items to data sink", {"num": len(g)}, e)
+
+            if DEBUG:
+                from ..env.logs import Log
+                Log.note("ThreadedQueue stopped")
 
         self.thread = Thread.run("threaded queue", size_pusher)
 

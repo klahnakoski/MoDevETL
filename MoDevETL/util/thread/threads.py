@@ -25,7 +25,10 @@ DEBUG = True
 
 class Lock(object):
     """
-    SIMPLE LOCK (ACTUALLY, A PYTHON threadind.Condition() WITH notify() BEFORE EVERY RELEASE)
+    SIMPLE LOCK - A WRAPPER AROUND PYTHON threading.Condition()
+    * WITH notify() BEFORE EVERY RELEASE
+    * FIXED LACK OF wait() RETURN VALUE
+    * REPORT LOCKS BEING HELD TOO LONG
     """
 
     def __init__(self, name=""):
@@ -33,8 +36,17 @@ class Lock(object):
         self.name = name
 
     def __enter__(self):
-        self.monitor.acquire()
+        if DEBUG:
+            start = time.clock()
+            self.monitor.acquire()
+            end = time.clock()
+            interval = end - start
+            if interval > 0.2:
+                debug_note("Lock \"{{name}}\" took {{seconds|round(digits=2)}} seconds to acquire", {"name": self.name, "seconds": interval})
+        else:
+            self.monitor.acquire()
         return self
+
 
     def __exit__(self, a, b, c):
         self.monitor.notify()
@@ -43,10 +55,10 @@ class Lock(object):
     # RETURN True IF LOCK IS NOW OWNED
     def wait(self, timeout=None, till=None):
         if till:
-            timeout = (datetime.utcnow() - till).total_seconds()
+            timeout = float((datetime.utcnow() - till).total_seconds())
             if timeout < 0:
-                return
-        self.monitor.wait(timeout=float(timeout) if timeout else None)
+                return self.monitor._is_owned()   # Oh dear God!
+        self.monitor.wait(timeout=timeout if timeout else None)
         return self.monitor._is_owned()   # Oh dear God!
 
 
@@ -73,7 +85,6 @@ class Queue(object):
         self.lock = Lock("lock for queue")
         self.queue = []
 
-
     def __iter__(self):
         while self.keep_running:
             try:
@@ -81,9 +92,7 @@ class Queue(object):
                 if value is not Thread.STOP:
                     yield value
             except Exception, e:
-                from ..env.logs import Log
-
-                Log.warning("Tell me about what happened here", e)
+                warning("Tell me about what happened here", e)
 
     def add(self, value):
         with self.lock:
@@ -119,9 +128,7 @@ class Queue(object):
                 now = datetime.utcnow()
                 if next_warning < now:
                     next_warning = now + timedelta(seconds=wait_time)
-                    from ..env.logs import Log
-
-                    Log.warning("Queue is full ({{num}}} items), thread(s) have been waiting {{wait_time}} sec", {
+                    warning("Queue is full ({{num}}} items), thread(s) have been waiting {{wait_time}} sec", {
                         "num": len(self.queue),
                         "wait_time": wait_time
                     })
@@ -135,6 +142,7 @@ class Queue(object):
             while self.keep_running:
                 if self.queue:
                     value = self.queue.pop(0)
+                    debug_note("queue popped value")
                     if value is Thread.STOP:  # SENDING A STOP INTO THE QUEUE IS ALSO AN OPTION
                         self.keep_running = False
                     return value
@@ -152,9 +160,7 @@ class Queue(object):
                             now = datetime.utcnow()
                             if next_warning < now:
                                 next_warning = now + timedelta(seconds=wait_time)
-                                from ..env.logs import Log
-
-                                Log.warning("Queue is waiting for content ({{num}}} items)", {"num": len(self.queue)})
+                                warning("Queue is waiting for content ({{num}}} items)", {"num": len(self.queue)})
 
             return Thread.STOP
 
@@ -181,6 +187,9 @@ class Queue(object):
             self.keep_running = False
 
 
+
+
+
 class AllThread(object):
     """
     RUN ALL ADDED FUNCTIONS IN PARALLEL, BE SURE TO HAVE JOINED BEFORE EXIT
@@ -204,13 +213,10 @@ class AllThread(object):
                 if "exception" in response:
                     exceptions.append(response["exception"])
         except Exception, e:
-            from ..env.logs import Log
-
-            Log.warning("Problem joining", e)
+            warning("Problem joining", e)
 
         if exceptions:
             from ..env.logs import Log
-
             Log.error("Problem in child threads", exceptions)
 
 
@@ -222,7 +228,7 @@ class AllThread(object):
         self.threads.append(t)
 
 
-ALL_LOCK = Lock()
+ALL_LOCK = Lock("main threads lock")
 MAIN_THREAD = Struct(name="Main Thread", id=thread.get_ident())
 ALL = dict()
 ALL[thread.get_ident()] = MAIN_THREAD
@@ -244,7 +250,7 @@ class Thread(object):
         self.name = name
         self.target = target
         self.response = None
-        self.synch_lock = Lock()
+        self.synch_lock = Lock("child thread response lock")
         self.args = args
 
         # ENSURE THERE IS A SHARED please_stop SIGNAL
@@ -273,7 +279,6 @@ class Thread(object):
             thread.start_new_thread(Thread._run, (self, ))
         except Exception, e:
             from ..env.logs import Log
-
             Log.error("Can not start thread", e)
 
     def stop(self):
@@ -323,9 +328,7 @@ class Thread(object):
                         self.synch_lock.wait(0.5)
 
                 if DEBUG:
-                    from ..env.logs import Log
-
-                    Log.note("Waiting on thread {{thread|json}}", {"thread": self.name})
+                    debug_note("Waiting on thread {{thread|json}}", {"thread": self.name})
         else:
             self.stopped.wait_for_go(till=till)
             if self.stopped:
@@ -378,8 +381,8 @@ class Signal(object):
     on_go(f) - GIVE IT A f TO CALL WHEN SIGNAL IS ACTIVATED
     """
 
-    def __init__(self):
-        self.lock = Lock()
+    def __init__(self, name=None):
+        self.lock = Lock("lock for signal "+name if name else "")
         self._go = False
         self.job_queue = []
 
@@ -460,23 +463,18 @@ class ThreadedQueue(Queue):
             from ..queries import Q
 
             for i, g in Q.groupby(self, size=size):
+                debug_note("Got {{i}} with {{g}} items", {"i": i, "g": len(g)})
                 try:
                     destination.extend(g)
                     if please_stop:
-                        from ..env.logs import Log
-
-                        Log.warning("ThreadedQueue stopped early, with {{num}} items left in queue", {
+                        warning("ThreadedQueue stopped early, with {{num}} items left in queue", {
                             "num": len(self)
                         })
                         return
                 except Exception, e:
-                    from ..env.logs import Log
+                    warning("Problem with pushing {{num}} items to data sink", {"num": len(g)}, e)
 
-                    Log.warning("Problem with pushing {{num}} items to data sink", {"num": len(g)}, e)
-
-            if DEBUG:
-                from ..env.logs import Log
-                Log.note("ThreadedQueue stopped")
+            debug_note("ThreadedQueue stopped")
 
         self.thread = Thread.run("threaded queue", size_pusher)
 
@@ -489,3 +487,22 @@ class ThreadedQueue(Queue):
         if isinstance(b, BaseException):
             self.thread.please_stop.go()
         self.thread.join()
+
+
+log_lock = Lock("threads.log_lock")
+
+def debug_note(*args):
+    if DEBUG:
+        with log_lock:
+            if "Log" not in globals():
+                from ..env.logs import Log
+
+            Log.note(*args, stack_depth=1)
+
+
+def warning(*args):
+    with log_lock:
+        if "Log" not in globals():
+            from ..env.logs import Log
+
+        Log.warning(*args, stack_depth=1)

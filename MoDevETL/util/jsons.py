@@ -122,7 +122,12 @@ def _value2json(value, _buffer):
             append(_buffer, u"{}")
     elif type is str:
         append(_buffer, u"\"")
-        v = value.decode("utf8")
+        try:
+            v = value.decode("utf8")
+        except Exception, e:
+            from .env.logs import Log
+            raise Log.error("Serialization of value="+repr(value), e)
+
         for c in v:
             append(_buffer, ESCAPE_DCT.get(c, c))
         append(_buffer, u"\"")

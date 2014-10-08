@@ -132,7 +132,13 @@ class Log(object):
 
 
     @classmethod
-    def warning(cls, template, params=None, cause=None):
+    def warning(
+        cls,
+        template,
+        params=None,
+        cause=None,
+        stack_depth=0        # stack trace offset (==1 if you do not want to report self)
+    ):
         if isinstance(params, BaseException):
             cause = params
             params = None
@@ -140,7 +146,7 @@ class Log(object):
         if cause and not isinstance(cause, Except):
             cause = Except(ERROR, unicode(cause), trace=extract_tb(0))
 
-        trace = extract_stack(1)
+        trace = extract_stack(stack_depth+1)
         e = Except(WARNING, template, params, cause, trace)
         Log.note(unicode(e), {
             "warning": {  # REDUNDANT INFO
@@ -470,7 +476,7 @@ class Log_usingFile(BaseLog):
             self.file.backup()
             self.file.delete()
 
-        self.file_lock = threads.Lock()
+        self.file_lock = threads.Lock("file lock for logging")
 
     def write(self, template, params):
         with self.file_lock:

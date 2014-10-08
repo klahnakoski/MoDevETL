@@ -180,6 +180,7 @@ def full_etl(settings, sink, bugs):
             e = end_candidates[ei]
 
             s.review_time = e.modified_ts
+            s.review_duration = e.modified_ts
             s.review_result = e.review_result
             s.review_end_reason = e.review_end_reason
             s.product = nvl(e.product, s.product)

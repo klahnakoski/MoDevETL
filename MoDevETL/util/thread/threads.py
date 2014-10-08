@@ -82,7 +82,7 @@ class Queue(object):
         self.max = nvl(max, 2 ** 10)
         self.silent = silent
         self.keep_running = True
-        self.lock = Lock("lock for queue")
+        self.lock = Lock("lock for message queue")
         self.queue = []
 
     def __iter__(self):

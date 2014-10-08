@@ -25,10 +25,7 @@ DEBUG = True
 
 class Lock(object):
     """
-    SIMPLE LOCK - A WRAPPER AROUND PYTHON threading.Condition()
-    * WITH notify() BEFORE EVERY RELEASE
-    * FIXED LACK OF wait() RETURN VALUE
-    * REPORT LOCKS BEING HELD TOO LONG
+    SIMPLE LOCK (ACTUALLY, A PYTHON threadind.Condition() WITH notify() BEFORE EVERY RELEASE)
     """
 
     def __init__(self, name=""):
@@ -36,37 +33,22 @@ class Lock(object):
         self.name = name
 
     def __enter__(self):
-        if DEBUG:
-            start = time.clock()
-            self.monitor.acquire()
-            end = time.clock()
-            interval = end - start
-            if interval > 0.2:
-                debug_note("Lock \"{{name}}\" took {{seconds|round(digits=2)}} seconds to acquire", {"name": self.name, "seconds": interval})
-        else:
-            self.monitor.acquire()
+        self.monitor.acquire()
         return self
-
 
     def __exit__(self, a, b, c):
         self.monitor.notify()
         self.monitor.release()
 
-    # RETURN True IF LOCK IS NOW OWNED
     def wait(self, timeout=None, till=None):
         if till:
-            timeout = float((datetime.utcnow() - till).total_seconds())
+            timeout = (datetime.utcnow() - till).total_seconds()
             if timeout < 0:
-                return self.monitor._is_owned()   # Oh dear God!
-        self.monitor.wait(timeout=timeout if timeout else None)
-        return self.monitor._is_owned()   # Oh dear God!
-
+                return
+        self.monitor.wait(timeout=float(timeout) if timeout else None)
 
     def notify_all(self):
         self.monitor.notify_all()
-
-    def notify(self):
-        self.monitor.notify()
 
 
 class Queue(object):
@@ -82,8 +64,9 @@ class Queue(object):
         self.max = nvl(max, 2 ** 10)
         self.silent = silent
         self.keep_running = True
-        self.lock = Lock("lock for message queue")
+        self.lock = Lock("lock for queue")
         self.queue = []
+        self.next_warning=datetime.utcnow()  # FOR DEBUGGING
 
     def __iter__(self):
         while self.keep_running:
@@ -92,7 +75,9 @@ class Queue(object):
                 if value is not Thread.STOP:
                     yield value
             except Exception, e:
-                warning("Tell me about what happened here", e)
+                from ..env.logs import Log
+
+                Log.warning("Tell me about what happened here", e)
 
     def add(self, value):
         with self.lock:
@@ -113,25 +98,27 @@ class Queue(object):
         """
         EXPECT THE self.lock TO BE HAD, WAITS FOR self.queue TO HAVE A LITTLE SPACE
         """
-        if self.silent:
-            while self.keep_running and len(self.queue) > self.max:
-                self.lock.wait()
-            return
-
         wait_time = 5
+
         now = datetime.utcnow()
-        next_warning = now + timedelta(seconds=wait_time)
+        if self.next_warning < now:
+            self.next_warning = now + timedelta(seconds=wait_time)
 
         while self.keep_running and len(self.queue) > self.max:
-            self.lock.wait(till=next_warning)
-            if len(self.queue) > self.max:
-                now = datetime.utcnow()
-                if next_warning < now:
-                    next_warning = now + timedelta(seconds=wait_time)
-                    warning("Queue is full ({{num}}} items), thread(s) have been waiting {{wait_time}} sec", {
-                        "num": len(self.queue),
-                        "wait_time": wait_time
-                    })
+            if self.silent:
+                self.lock.wait()
+            else:
+                self.lock.wait(wait_time)
+                if len(self.queue) > self.max:
+                    now = datetime.utcnow()
+                    if self.next_warning < now:
+                        self.next_warning = now + timedelta(seconds=wait_time)
+                        from ..env.logs import Log
+
+                        Log.warning("Queue is full ({{num}}} items), thread(s) have been waiting {{wait_time}} sec", {
+                            "num": len(self.queue),
+                            "wait_time": wait_time
+                        })
 
     def __len__(self):
         with self.lock:
@@ -142,26 +129,10 @@ class Queue(object):
             while self.keep_running:
                 if self.queue:
                     value = self.queue.pop(0)
-                    debug_note("queue popped value")
                     if value is Thread.STOP:  # SENDING A STOP INTO THE QUEUE IS ALSO AN OPTION
                         self.keep_running = False
                     return value
-
-                if self.silent:
-                    self.lock.wait()
-                else:
-                    wait_time = 5
-                    now = datetime.utcnow()
-                    next_warning = now + timedelta(seconds=wait_time)
-
-                    while self.keep_running and not self.queue:
-                        self.lock.wait(till=next_warning)
-                        if not self.queue:
-                            now = datetime.utcnow()
-                            if next_warning < now:
-                                next_warning = now + timedelta(seconds=wait_time)
-                                warning("Queue is waiting for content ({{num}}} items)", {"num": len(self.queue)})
-
+                self.lock.wait()
             return Thread.STOP
 
     def pop_all(self):
@@ -187,9 +158,6 @@ class Queue(object):
             self.keep_running = False
 
 
-
-
-
 class AllThread(object):
     """
     RUN ALL ADDED FUNCTIONS IN PARALLEL, BE SURE TO HAVE JOINED BEFORE EXIT
@@ -213,10 +181,13 @@ class AllThread(object):
                 if "exception" in response:
                     exceptions.append(response["exception"])
         except Exception, e:
-            warning("Problem joining", e)
+            from ..env.logs import Log
+
+            Log.warning("Problem joining", e)
 
         if exceptions:
             from ..env.logs import Log
+
             Log.error("Problem in child threads", exceptions)
 
 
@@ -228,7 +199,7 @@ class AllThread(object):
         self.threads.append(t)
 
 
-ALL_LOCK = Lock("main threads lock")
+ALL_LOCK = Lock()
 MAIN_THREAD = Struct(name="Main Thread", id=thread.get_ident())
 ALL = dict()
 ALL[thread.get_ident()] = MAIN_THREAD
@@ -250,7 +221,7 @@ class Thread(object):
         self.name = name
         self.target = target
         self.response = None
-        self.synch_lock = Lock("child thread response lock")
+        self.synch_lock = Lock()
         self.args = args
 
         # ENSURE THERE IS A SHARED please_stop SIGNAL
@@ -279,6 +250,7 @@ class Thread(object):
             thread.start_new_thread(Thread._run, (self, ))
         except Exception, e:
             from ..env.logs import Log
+
             Log.error("Can not start thread", e)
 
     def stop(self):
@@ -328,7 +300,9 @@ class Thread(object):
                         self.synch_lock.wait(0.5)
 
                 if DEBUG:
-                    debug_note("Waiting on thread {{thread|json}}", {"thread": self.name})
+                    from ..env.logs import Log
+
+                    Log.note("Waiting on thread {{thread|json}}", {"thread": self.name})
         else:
             self.stopped.wait_for_go(till=till)
             if self.stopped:
@@ -378,11 +352,11 @@ class Signal(object):
     go() - ACTIVATE SIGNAL (DOES NOTHING IF SIGNAL IS ALREADY ACTIVATED)
     wait_for_go() - PUT THREAD IN WAIT STATE UNTIL SIGNAL IS ACTIVATED
     is_go() - TEST IF SIGNAL IS ACTIVATED, DO NOT WAIT
-    on_go(f) - GIVE IT A f TO CALL WHEN SIGNAL IS ACTIVATED
+    on_go() - METHOD FOR OTHEr THREAD TO RUN WHEN ACTIVATING SIGNAL
     """
 
-    def __init__(self, name=None):
-        self.lock = Lock("lock for signal "+name if name else "")
+    def __init__(self):
+        self.lock = Lock()
         self._go = False
         self.job_queue = []
 
@@ -446,35 +420,33 @@ class ThreadedQueue(Queue):
     DISPATCH TO ANOTHER (SLOWER) queue IN BATCHES OF GIVEN size
     """
 
-    DEBUG = True
-
-    def __init__(self, destination, size=None, max=None, period=None, silent=False):
+    def __init__(self, queue, size=None, max=None, period=None, silent=False):
         if max == None:
             # REASONABLE DEFAULT
             max = size * 2
 
         Queue.__init__(self, max=max, silent=silent)
-        self.sink = destination
 
         def size_pusher(please_stop):
             please_stop.on_go(lambda: self.add(Thread.STOP))
 
-            # self IS A MULTI-THREADED QUEUE, SO THIS WILL BLOCK UNTIL THE size ARE READY
+            # queue IS A MULTI-THREADED QUEUE, SO THIS WILL BLOCK UNTIL THE size ARE READY
             from ..queries import Q
 
             for i, g in Q.groupby(self, size=size):
-                debug_note("Got {{i}} with {{g}} items", {"i": i, "g": len(g)})
                 try:
-                    destination.extend(g)
+                    queue.extend(g)
                     if please_stop:
-                        warning("ThreadedQueue stopped early, with {{num}} items left in queue", {
+                        from ..env.logs import Log
+
+                        Log.warning("ThreadedQueue stopped early, with {{num}} items left in queue", {
                             "num": len(self)
                         })
                         return
                 except Exception, e:
-                    warning("Problem with pushing {{num}} items to data sink", {"num": len(g)}, e)
+                    from ..env.logs import Log
 
-            debug_note("ThreadedQueue stopped")
+                    Log.warning("Problem with pushing {{num}} items to data sink", {"num": len(g)}, e)
 
         self.thread = Thread.run("threaded queue", size_pusher)
 
@@ -487,22 +459,3 @@ class ThreadedQueue(Queue):
         if isinstance(b, BaseException):
             self.thread.please_stop.go()
         self.thread.join()
-
-
-log_lock = Lock("threads.log_lock")
-
-def debug_note(*args):
-    if DEBUG:
-        with log_lock:
-            if "Log" not in globals():
-                from ..env.logs import Log
-
-            Log.note(*args, stack_depth=1)
-
-
-def warning(*args):
-    with log_lock:
-        if "Log" not in globals():
-            from ..env.logs import Log
-
-        Log.warning(*args, stack_depth=1)

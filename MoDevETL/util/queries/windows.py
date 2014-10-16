@@ -17,7 +17,7 @@ from ..collections import MIN, MAX
 from ..env.logs import Log
 from ..maths import Math
 from ..collections.multiset import Multiset
-from ..maths.stats import Z_moment, z_moment2stats
+from ..maths.stats import ZeroMoment, ZeroMoment2Stats
 
 # A VARIETY OF SLIDING WINDOW FUNCTIONS
 
@@ -128,23 +128,23 @@ class _SimpleStats(WindowFunction):
 
     def __init__(self):
         object.__init__(self)
-        self.total = Z_moment(0, 0, 0)
+        self.total = ZeroMoment(0, 0, 0)
 
     def add(self, value):
         if value == None:
             return
-        self.total += Z_moment.new_instance([value])
+        self.total += ZeroMoment.new_instance([value])
 
     def sub(self, value):
         if value == None:
             return
-        self.total -= Z_moment.new_instance([value])
+        self.total -= ZeroMoment.new_instance([value])
 
     def merge(self, agg):
         self.total += agg.total
 
     def end(self):
-        return z_moment2stats(self.total)
+        return ZeroMoment2Stats(self.total)
 
 
 class Min(WindowFunction):

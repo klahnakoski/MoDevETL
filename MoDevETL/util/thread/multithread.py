@@ -13,11 +13,12 @@ from __future__ import division
 
 from collections import Iterable
 from types import GeneratorType
+from MoDevETL.util.times.timer import Timer
 from ..struct import nvl
 from ..env.logs import Log
 from ..thread.threads import Queue, Thread
 
-DEBUG = False
+DEBUG = True
 
 
 class Multithread(object):
@@ -141,7 +142,8 @@ class worker_thread(Thread):
     def event_loop(self, please_stop):
         got_stop_message = False
         while not please_stop.is_go():
-            request = self.in_queue.pop()
+            with Timer("get more work", debug=DEBUG):
+                request = self.in_queue.pop()
             if request == Thread.STOP:
                 if DEBUG:
                     Log.note("{{name}} got a stop message", {"name": self.name})
@@ -155,34 +157,40 @@ class worker_thread(Thread):
             if please_stop.is_go():
                 break
 
-            try:
-                if DEBUG and hasattr(self.function, "func_name"):
-                    Log.note("run {{function}}", {"function": self.function.func_name})
-                result = self.function(**request)
-                if self.out_queue != None:
-                    self.out_queue.add({"response": result})
-            except Exception, e:
-                Log.warning("Can not execute with params={{params}}", {"params": request}, e)
-                if self.out_queue != None:
-                    self.out_queue.add({"exception": e})
-            finally:
-                self.num_runs += 1
+            with Timer("run {{function}}", {"function": get_function_name(self.function)}, debug=DEBUG):
+                try:
+                    result = self.function(**request)
+                    if self.out_queue != None:
+                        self.out_queue.add({"response": result})
+                except Exception, e:
+                    Log.warning("Can not execute with params={{params}}", {"params": request}, e)
+                    if self.out_queue != None:
+                        self.out_queue.add({"exception": e})
+                finally:
+                    self.num_runs += 1
 
+        if DEBUG:
+            Log.note("please_stop has been encountered")
         please_stop.go()
         del self.function
 
         if DEBUG:
             if self.num_runs == 0:
-                if DEBUG:
-                    Log.note("{{name}} thread did no work", {"name": self.name})
+                Log.note("{{name}} thread did no work", {"name": self.name})
             else:
                 Log.note("{{name}} thread did {{num}} units of work", {
                     "name": self.name,
                     "num": self.num_runs
                 })
-                
+
         if got_stop_message and self.in_queue.queue:
             Log.warning("multithread programmer error, queue not empty. {{num}} requests lost", {"num": len(self.in_queue.queue)})
         if DEBUG:
             Log.note("{{thread}} DONE", {"thread": self.name})
 
+def get_function_name(func):
+    if hasattr(func, "__name__"):
+        return func.__name__
+    if hasattr(func, "func_name"):
+        return func.func_name
+    return "function"

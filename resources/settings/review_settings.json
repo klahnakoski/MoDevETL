@@ -1,43 +1,42 @@
 {
-    "source": {
-        "host": "http://elasticsearch-private.bugs.scl3.mozilla.com",
-        "port": "9200",
-        "index": "private_bugs",
-        "type": "bug_version",
-        "debug": true
-    },
-    "destination": {
-	    "host":"http://localhost",
-//	    "host": "http://klahnakoski-es.corp.tor1.mozilla.com",
-//        "host": "http://elasticsearch-private.bugs.scl3.mozilla.com",
-        "port": "9200",
-        "index": "reviews",
-        "schema_file": "resources/schema/review_type.json",
-        "limit_replicas": true,
-        "type": "patch_review",
-        "debug": false
-    },
-	"debug": {
-        "profile": false,
-        "trace": true,
-        "log": [
-            {
-                "log_type": "stream",
-                "stream": "sys.stdout"
-            },
-            {
-                "class": "logging.handlers.RotatingFileHandler",
-                "filename": "./results/logs/review_etl.log",
-                "maxBytes": 10000000,
-                "backupCount": 3,
-                "encoding": "utf8"
-            },
-            {
-                "log_type": "elasticsearch",
-                "host": "http://elasticsearch5.bugs.scl3.mozilla.com",
-                "index": "debug",
-                "type": "review_etl"
-            }
-        ]
-    }
+	"source" : {
+		"host" : "http://elasticsearch-private.bugs.scl3.mozilla.com",
+		"port" : "9200",
+		"index" : "private_bugs",
+		"type" : "bug_version",
+		"debug" : true,
+		"batch_size": 1000
+	},
+	"destination" : {
+		"host" : "http://localhost",
+//		"host" : "http://klahnakoski-es.corp.tor1.mozilla.com",
+//		"host" : "http://elasticsearch-private.bugs.scl3.mozilla.com",
+		"port" : "9200",
+		"index" : "reviews",
+		"schema_file" : "resources/schema/review_type.json",
+		"limit_replicas" : true,
+		"type" : "patch_review",
+		"batch_size" : 100,
+		"debug" : true
+	},
+	"threads" : 4,
+//	"min_bug":53000,
+//	"max_bug":63000,
+	"debug" : {
+		"profile" : false,
+		"trace" : true,
+		"log" : [
+			{
+				"log_type" : "stream",
+				"stream" : "sys.stdout"
+			},
+			{
+				"class" : "logging.handlers.RotatingFileHandler",
+				"filename" : "./results/logs/review_etl.log",
+				"maxBytes" : 10000000,
+				"backupCount" : 3,
+				"encoding" : "utf8"
+			}
+		]
+	}
 }

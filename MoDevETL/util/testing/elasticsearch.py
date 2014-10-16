@@ -77,7 +77,7 @@ class Fake_ES():
         data_as_json = CNV.object2JSON(self.data, pretty=True)
 
         File(self.filename).write(data_as_json)
-        Log.note("{{num}} items added", {"num": len(records)})
+        Log.note("{{num}} documents added", {"num": len(records)})
 
     def add(self, record):
         if isinstance(record, list):

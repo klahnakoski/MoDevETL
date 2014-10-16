@@ -13,6 +13,7 @@ from datetime import datetime
 import io
 import os
 import shutil
+from ..strings import utf82unicode
 from ..maths import crypto
 from ..struct import nvl
 from ..structs.wraps import listwrap
@@ -159,7 +160,7 @@ class File(object):
             try:
                 with io.open(self._filename, "rb") as f:
                     for line in f:
-                        yield line.decode("utf8")
+                        yield utf82unicode(line)
             except Exception, e:
                 from .logs import Log
 

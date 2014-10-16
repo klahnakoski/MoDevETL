@@ -14,10 +14,10 @@ import json
 from math import floor
 import re
 import time
+import sys
 from datetime import datetime, date, timedelta
 from decimal import Decimal
-import sys
-from .collections import AND, MAX
+from .strings import utf82unicode
 from .struct import Struct, StructList
 
 json_decoder = json.JSONDecoder().decode
@@ -123,10 +123,9 @@ def _value2json(value, _buffer):
     elif type is str:
         append(_buffer, u"\"")
         try:
-            v = value.decode("utf8")
+            v = utf82unicode(value)
         except Exception, e:
-            from .env.logs import Log
-            raise Log.error("Serialization of value="+repr(value), e)
+            problem_serializing(value, e)
 
         for c in v:
             append(_buffer, ESCAPE_DCT.get(c, c))
@@ -187,7 +186,7 @@ def _dict2json(value, _buffer):
         append(_buffer, prefix)
         prefix = u", \""
         if isinstance(k, str):
-            k = k.decode("utf8")
+            k = utf82unicode(k)
         for c in k:
             append(_buffer, ESCAPE_DCT.get(c, c))
         append(_buffer, u"\": ")
@@ -220,11 +219,11 @@ def _scrub(value):
     type = value.__class__
 
     if type in (date, datetime):
-        return datetime2milli(value)
+        return datetime2milli(value, type)
     elif type is timedelta:
         return unicode(value.total_seconds()) + "second"
     elif type is str:
-        return unicode(value.decode("utf8"))
+        return utf82unicode(value)
     elif type is Decimal:
         return float(value)
     elif isinstance(value, dict):
@@ -273,13 +272,7 @@ def pretty_json(value):
             return "null"
         elif isinstance(value, basestring):
             if isinstance(value, str):
-                try:
-                    value = value.decode("utf8")
-                except Exception, e:
-                    from .env.logs import Log
-
-                    value = unicode(value.decode("latin1"))
-                    Log.warning("Should not have latin1 encoded strings: {{value}}", {"value": value}, e)
+                value = utf82unicode(value)
             try:
                 return quote(value)
             except Exception, e:
@@ -344,8 +337,8 @@ def pretty_json(value):
                     return "[" + j + "]"
 
             js = [pretty_json(v) for v in value]
-            max_len = MAX(len(j) for j in js)
-            if max_len <= ARRAY_ITEM_MAX_LENGTH and AND(j.find("\n") == -1 for j in js):
+            max_len = max(*[len(j) for j in js])
+            if max_len <= ARRAY_ITEM_MAX_LENGTH and max(*[j.find("\n") for j in js]) == -1:
                 # ALL TINY VALUES
                 num_columns = max(1, min(ARRAY_MAX_COLUMNS, int(floor((ARRAY_ROW_LENGTH + 2.0)/float(max_len+2)))))  # +2 TO COMPENSATE FOR COMMAS
                 if len(js)<=num_columns:  # DO NOT ADD \n IF ONLY ONE ROW
@@ -386,11 +379,34 @@ def pretty_json(value):
             return encode(value)
 
     except Exception, e:
-        from .env.logs import Log
-
-        Log.error("Problem turning value ({{value}}) to json", {"value": repr(value)}, e)
+        problem_serializing(value, e)
 
 
+def problem_serializing(value, e=None):
+    """
+    THROW ERROR ABOUT SERIALIZING
+    """
+    from .env.logs import Log
+
+    try:
+        typename = type(value).__name__
+    except Exception:
+        typename = "<error getting name>"
+
+    try:
+        rep = repr(value)
+    except Exception:
+        rep = None
+
+    if rep == None:
+        Log.error("Problem turning value of type {{type}} to json", {
+            "type": typename
+        }, e)
+    else:
+        Log.error("Problem turning value ({{value}}) of type {{type}} to json", {
+            "value": rep,
+            "type": typename
+        }, e)
 
 
 
@@ -427,21 +443,16 @@ def value_compare(a, b):
         return 0
 
 
-def datetime2milli(d):
+def datetime2milli(d, type):
     try:
-        if d == None:
-            return None
-        elif isinstance(d, datetime):
-            epoch = datetime(1970, 1, 1)
-        elif isinstance(d, date):
-            epoch = date(1970, 1, 1)
+        if type == datetime:
+            diff = d - datetime(1970, 1, 1)
         else:
-            raise Exception("Can not convert "+repr(d)+" to json")
+            diff = d - date(1970, 1, 1)
 
-        diff = d - epoch
         return long(diff.total_seconds()) * 1000L + long(diff.microseconds / 1000)
     except Exception, e:
-        raise Exception("Can not convert "+repr(d)+" to json", e)
+        problem_serializing(d, e)
 
 
 

@@ -418,6 +418,10 @@ class ThreadedQueue(Queue):
     """
     TODO: Check that this queue is not dropping items at shutdown
     DISPATCH TO ANOTHER (SLOWER) queue IN BATCHES OF GIVEN size
+
+    queue          - THE SLOWER QUEUE
+    max            - SET THE MAXIMUM SIZE OF THE QUEUE, WRITERS WILL BLOCK IF QUEUE IS OVER THIS LIMIT
+    silent = False - WRITES WILL COMPLAIN IF THEY ARE WAITING TOO LONG
     """
 
     def __init__(self, queue, size=None, max=None, period=None, silent=False):
@@ -448,7 +452,7 @@ class ThreadedQueue(Queue):
 
                     Log.warning("Problem with pushing {{num}} items to data sink", {"num": len(g)}, e)
 
-        self.thread = Thread.run("threaded queue", size_pusher)
+        self.thread = Thread.run("threaded queue " + unicode(id(self)), size_pusher)
 
 
     def __enter__(self):

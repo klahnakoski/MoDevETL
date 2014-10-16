@@ -15,15 +15,16 @@ import re
 import time
 import requests
 
-from ..maths.randoms import Random
-from ..thread.threads import ThreadedQueue
-from ..maths import Math
+from ..collections import OR
 from ..cnv import CNV
 from ..env.logs import Log
+from ..maths.randoms import Random
+from ..maths import Math
+from ..strings import utf82unicode
 from ..struct import nvl, Null
 from ..structs.wraps import wrap, unwrap
 from ..struct import Struct, StructList
-from ..collections import OR
+from ..thread.threads import ThreadedQueue
 
 
 DEBUG = False
@@ -219,7 +220,7 @@ class Index(object):
                     })
 
             if self.debug:
-                Log.note("{{num}} items added", {"num": int(len(lines) / 2)})
+                Log.note("{{num}} documents added", {"num": int(len(lines) / 2)})
         except Exception, e:
             if e.message.startswith("sequence item "):
                 Log.error("problem with {{data}}", {"data": repr(lines[int(e.message[14:16].strip())])}, e)
@@ -245,10 +246,10 @@ class Index(object):
             data="{\"index.refresh_interval\":\"" + interval + "\"}"
         )
 
-        result = CNV.JSON2object(response.content.decode("utf-8"))
+        result = CNV.JSON2object(utf82unicode(response.content))
         if not result.ok:
             Log.error("Can not set refresh interval ({{error}})", {
-                "error": response.content.decode("utf-8")
+                "error": utf82unicode(response.content)
             })
 
     def search(self, query, timeout=None):
@@ -327,7 +328,7 @@ class Cluster(object):
             settings.alias = settings.index
             settings.index = proto_name(settings.alias)
 
-        if settings.alias==settings.index:
+        if settings.alias == settings.index:
             Log.error("Expecting index name to conform to pattern")
 
         if not schema and settings.schema_file:
@@ -401,8 +402,8 @@ class Cluster(object):
             kwargs = unwrap(kwargs)
             response = requests.post(url, *args, **kwargs)
             if self.debug:
-                Log.note(response.content.decode("utf-8")[:130])
-            details = CNV.JSON2object(response.content.decode("utf-8"))
+                Log.note(utf82unicode(response.content)[:130])
+            details = CNV.JSON2object(utf82unicode(response.content))
             if details.error:
                 Log.error(CNV.quote2string(details.error))
             if details._shards.failed > 0:
@@ -426,8 +427,8 @@ class Cluster(object):
             kwargs.setdefault("timeout", 600)
             response = requests.get(url, **kwargs)
             if self.debug:
-                Log.note(response.content.decode("utf-8")[:130])
-            details = wrap(CNV.JSON2object(response.content.decode("utf-8")))
+                Log.note(utf82unicode(response.content)[:130])
+            details = wrap(CNV.JSON2object(utf82unicode(response.content)))
             if details.error:
                 Log.error(details.error)
             return details
@@ -441,7 +442,7 @@ class Cluster(object):
             kwargs.setdefault("timeout", 60)
             response = requests.put(url, *args, **kwargs)
             if self.debug:
-                Log.note(response.content.decode("utf-8"))
+                Log.note(utf82unicode(response.content))
             return response
         except Exception, e:
             Log.error("Problem with call to {{url}}", {"url": url}, e)
@@ -452,7 +453,7 @@ class Cluster(object):
             kwargs.setdefault("timeout", 60)
             response = requests.delete(url, **kwargs)
             if self.debug:
-                Log.note(response.content.decode("utf-8"))
+                Log.note(utf82unicode(response.content))
             return response
         except Exception, e:
             Log.error("Problem with call to {{url}}", {"url": url}, e)
@@ -471,7 +472,6 @@ def sort(values):
 def scrub(r):
     """
     REMOVE KEYS OF DEGENERATE VALUES (EMPTY STRINGS, EMPTY LISTS, AND NULLS)
-    TO LOWER CASE
     CONVERT STRINGS OF NUMBERS TO NUMBERS
     RETURNS **COPY**, DOES NOT CHANGE ORIGINAL
     """

@@ -25,6 +25,9 @@ class Timer:
         something_that_takes_long()
     OUTPUT:
         doing hard time took 45.468 sec
+
+    param - USED WHEN LOGGING
+    debug - SET TO False TO DISABLE THIS TIMER
     """
 
     def __init__(self, description, param=None, debug=True):

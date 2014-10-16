@@ -58,7 +58,7 @@ def chisquare(f_obs, f_exp):
     return py_result
 
 
-def stats2z_moment(stats):
+def Stats2ZeroMoment(stats):
     # MODIFIED FROM http://statsmodels.sourceforge.net/devel/_modules/statsmodels/stats/moment_helpers.html
     # ADDED count
     mc0, mc1, mc2, skew, kurt = stats.count, nvl(stats.mean, 0), nvl(stats.variance, 0), nvl(stats.skew, 0), nvl(stats.kurtosis, 0)
@@ -71,26 +71,26 @@ def stats2z_moment(stats):
     mc4 = (nvl(kurt, 0) + 3.0) * (mc2 ** 2.0) # 4th central moment
     mz4 = (mc4 + 4 * mc1 * mc3 + 6 * mc1 * mc1 * mc2 + mc1 ** 4) * mc0
 
-    m = Z_moment(mz0, mz1, mz2, mz3, mz4)
+    m = ZeroMoment(mz0, mz1, mz2, mz3, mz4)
     if DEBUG:
         from ..testing.fuzzytestcase import assertAlmostEqualValue
 
         globals()["DEBUG"] = False
         try:
-            v = z_moment2stats(m, unbiased=False)
+            v = ZeroMoment2Stats(m, unbiased=False)
             assertAlmostEqualValue(v.count, stats.count)
             assertAlmostEqualValue(v.mean, stats.mean)
             assertAlmostEqualValue(v.variance, stats.variance)
             assertAlmostEqualValue(v.skew, stats.skew)
             assertAlmostEqualValue(v.kurtosis, stats.vkurtosis)
         except Exception, e:
-            v = z_moment2stats(m, unbiased=False)
+            v = ZeroMoment2Stats(m, unbiased=False)
             Log.error("programmer error")
         globals()["DEBUG"] = True
     return m
 
 
-def z_moment2stats(z_moment, unbiased=True):
+def ZeroMoment2Stats(z_moment, unbiased=True):
     Z = z_moment.S
     N = Z[0]
     if N == 0:
@@ -132,7 +132,7 @@ def z_moment2stats(z_moment, unbiased=True):
         globals()["DEBUG"] = False
         v = Null
         try:
-            v = stats2z_moment(stats)
+            v = Stats2ZeroMoment(stats)
             for i in range(5):
                 assertAlmostEqualValue(v.S[i], Z[i], digits=6)
         except Exception, e:
@@ -151,7 +151,7 @@ class Stats(Struct):
         Struct.__init__(self)
 
         if "samples" in kwargs:
-            s = z_moment2stats(Z_moment.new_instance(kwargs["samples"]))
+            s = ZeroMoment2Stats(ZeroMoment.new_instance(kwargs["samples"]))
             self.count = s.count
             self.mean = s.mean
             self.variance = s.variance
@@ -207,7 +207,7 @@ class Stats(Struct):
         return sqrt(self.variance)
 
 
-class Z_moment(object):
+class ZeroMoment(object):
     """
     ZERO-CENTERED MOMENTS
     """
@@ -216,14 +216,14 @@ class Z_moment(object):
         self.S = tuple(args)
 
     def __add__(self, other):
-        if isinstance(other, Z_moment):
-            return Z_moment(*map(add, self.S, other.S))
+        if isinstance(other, ZeroMoment):
+            return ZeroMoment(*map(add, self.S, other.S))
         elif hasattr(other, "__iter__"):
-            return Z_moment(*map(add, self.S, Z_moment.new_instance(other)))
+            return ZeroMoment(*map(add, self.S, ZeroMoment.new_instance(other)))
         elif other == None:
             return self
         else:
-            return Z_moment(*map(add, self.S, (
+            return ZeroMoment(*map(add, self.S, (
                 1,
                 other,
                 pow(other, 2),
@@ -234,14 +234,14 @@ class Z_moment(object):
 
 
     def __sub__(self, other):
-        if isinstance(other, Z_moment):
-            return Z_moment(*map(sub, self.S, other.S))
+        if isinstance(other, ZeroMoment):
+            return ZeroMoment(*map(sub, self.S, other.S))
         elif hasattr(other, "__iter__"):
-            return Z_moment(*map(sub, self.S, Z_moment.new_instance(other)))
+            return ZeroMoment(*map(sub, self.S, ZeroMoment.new_instance(other)))
         elif other == None:
             return self
         else:
-            return Z_moment(*map(sub, self.S, (
+            return ZeroMoment(*map(sub, self.S, (
                 1,
                 other,
                 pow(other, 2),
@@ -264,9 +264,9 @@ class Z_moment(object):
     @staticmethod
     def new_instance(values=None):
         if values == None:
-            return Z_moment()
+            return ZeroMoment()
 
-        return Z_moment(
+        return ZeroMoment(
             len(values),
             sum(values),
             sum([pow(n, 2) for n in values]),
@@ -276,7 +276,7 @@ class Z_moment(object):
 
     @property
     def stats(self, *args, **kwargs):
-        return z_moment2stats(self, *args, **kwargs)
+        return ZeroMoment2Stats(self, *args, **kwargs)
 
 
 def add(a, b):
@@ -287,12 +287,12 @@ def sub(a, b):
     return nvl(a, 0) - nvl(b, 0)
 
 
-def z_moment2dict(z):
+def ZeroMoment2dict(z):
     # RETURN HASH OF SUMS
     return {u"s" + unicode(i): m for i, m in enumerate(z.S)}
 
 
-setattr(CNV, "z_moment2dict", staticmethod(z_moment2dict))
+setattr(CNV, "ZeroMoment2dict", staticmethod(ZeroMoment2dict))
 
 
 def median(values, simple=True, mean_weight=0.0):

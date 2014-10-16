@@ -207,7 +207,7 @@ def full_etl(settings, sink, bugs):
         })
 
     with Timer("add {{num}} reviews to ES for block {{start}}", {"start": min(*bugs), "num": len(reviews)}):
-        sink.extend({"value": r} for r in reviews)
+        sink.extend({"json": CNV.object2JSON(r)} for r in reviews)
 
 
 def main():

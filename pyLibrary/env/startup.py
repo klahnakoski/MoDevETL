@@ -33,7 +33,7 @@ from ..env.files import File
 # help - A brief description of what the argument does.
 # metavar - A name for the argument in usage messages.
 # dest - The name of the attribute to be added to the object returned by parse_args().
-from util.struct import Struct
+from ..struct import Struct
 
 
 def _argparse(defs):

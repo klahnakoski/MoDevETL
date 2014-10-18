@@ -10,7 +10,6 @@
 from __future__ import unicode_literals
 from __future__ import division
 
-from .. import struct
 from ..collections.matrix import Matrix
 from ..collections import AND, SUM, OR
 from ..structs.wraps import listwrap

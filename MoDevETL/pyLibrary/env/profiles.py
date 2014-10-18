@@ -84,14 +84,20 @@ def write(profile_settings):
         stats_file.write("<no profiles>")
 
     stats_file2 = File(profile_settings.filename, suffix=CNV.datetime2string(datetime.now(), "_series_%Y%m%d_%H%M%S"))
-    if profs:
-        r = range(MAX([len(p.samples) for p in profs]))
-        profs.insert(0, Struct(description="index", samples=r))
-        stats = [
-            {p.description: wrap(p.samples)[i] for p in profs if p.samples}
-            for i in r
-        ]
-        if stats:
-            stats_file2.write(CNV.list2tab(stats))
+    if not profs:
+        return
+
+    max_samples = MAX([len(p.samples) for p in profs if p.samples])
+    if not max_samples:
+        return
+
+    r = range(max_samples)
+    profs.insert(0, Struct(description="index", samples=r))
+    stats = [
+        {p.description: wrap(p.samples)[i] for p in profs if p.samples}
+        for i in r
+    ]
+    if stats:
+        stats_file2.write(CNV.list2tab(stats))
 
 

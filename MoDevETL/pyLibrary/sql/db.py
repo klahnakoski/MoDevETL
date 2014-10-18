@@ -55,6 +55,8 @@ class DB(object):
         USE IN with CLAUSE, YOU CAN STILL SEND UPDATES, BUT MUST OPEN A
         TRANSACTION BEFORE YOU DO
         """
+        settings = wrap(settings)
+
         if settings == None:
             Log.warning("No settings provided")
             return
@@ -241,8 +243,8 @@ class DB(object):
                 Log.note("Execute SQL:\n{{sql}}", {"sql": indent(sql)})
 
             self.cursor.execute(sql)
-            columns = [utf82unicode(d[0]) for d in nvl(self.cursor.description, [])]
-            fixed = [[utf82unicode(c) for c in row] for row in self.cursor]
+            columns = [utf8_to_unicode(d[0]) for d in nvl(self.cursor.description, [])]
+            fixed = [[utf8_to_unicode(c) for c in row] for row in self.cursor]
             result = CNV.table2list(columns, fixed)
 
             if not old_cursor:   # CLEANUP AFTER NON-TRANSACTIONAL READS
@@ -275,8 +277,8 @@ class DB(object):
                 Log.note("Execute SQL:\n{{sql}}", {"sql": indent(sql)})
 
             self.cursor.execute(sql)
-            grid = [[utf82unicode(c) for c in row] for row in self.cursor]
-            # columns = [utf82unicode(d[0]) for d in nvl(self.cursor.description, [])]
+            grid = [[utf8_to_unicode(c) for c in row] for row in self.cursor]
+            # columns = [utf8_to_unicode(d[0]) for d in nvl(self.cursor.description, [])]
             result = zip(*grid)
 
             if not old_cursor:   # CLEANUP AFTER NON-TRANSACTIONAL READS
@@ -310,10 +312,10 @@ class DB(object):
                 Log.note("Execute SQL:\n{{sql}}", {"sql": indent(sql)})
             self.cursor.execute(sql)
 
-            columns = tuple([utf82unicode(d[0]) for d in self.cursor.description])
+            columns = tuple([utf8_to_unicode(d[0]) for d in self.cursor.description])
             for r in self.cursor:
                 num += 1
-                _execute(wrap(dict(zip(columns, [utf82unicode(c) for c in r]))))
+                _execute(wrap(dict(zip(columns, [utf8_to_unicode(c) for c in r]))))
 
             if not old_cursor:   # CLEANUP AFTER NON-TRANSACTIONAL READS
                 self.cursor.close()
@@ -344,6 +346,8 @@ class DB(object):
     @staticmethod
     def execute_sql(settings, sql, param=None):
         """EXECUTE MANY LINES OF SQL (FROM SQLDUMP FILE, MAYBE?"""
+        settings = wrap(settings)
+        settings.schema = nvl(settings.schema, settings.database)
 
         if param:
             with DB(settings) as temp:
@@ -480,7 +484,9 @@ class DB(object):
 
     def update(self, table_name, where_slice, new_values):
         """
-        where_slice IS A Struct WHICH WILL BE USED TO MATCH ALL IN table
+        where_slice - A Struct WHICH WILL BE USED TO MATCH ALL IN table
+                      eg {"id": 42}
+        new_values  - A dict WITH COLUMN NAME, COLUMN VALUE PAIRS TO SET
         """
         new_values = self.quote_param(new_values)
 
@@ -569,11 +575,21 @@ class DB(object):
         return ",\n".join([self.quote_column(s.field) + (" DESC" if s.sort == -1 else " ASC") for s in sort])
 
 
+def utf8_to_unicode(v):
+    try:
+        if isinstance(v, str):
+            return v.decode("utf8")
+        else:
+            return v
+    except Exception, e:
+        Log.error("not expected", e)
 
 
 
-# ACTUAL SQL, DO NOT QUOTE THIS STRING
 class SQL(unicode):
+    """
+    ACTUAL SQL, DO NOT QUOTE THIS STRING
+    """
     def __init__(self, template='', param=None):
         unicode.__init__(self)
         self.template = template

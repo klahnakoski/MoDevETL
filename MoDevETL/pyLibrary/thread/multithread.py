@@ -13,7 +13,7 @@ from __future__ import division
 
 from collections import Iterable
 from types import GeneratorType
-from MoDevETL.util.times.timer import Timer
+from pyLibrary.times.timer import Timer
 from ..struct import nvl
 from ..env.logs import Log
 from ..thread.threads import Queue, Thread
@@ -42,18 +42,12 @@ class Multithread(object):
 
         # MAKE THREADS
         if isinstance(functions, Iterable):
-            if threads:
-                Log.error("do not know how to handle an array of functions AND a thread multiplier")
-            self.threads = []
-            for t, f in enumerate(functions):
-                thread = worker_thread("worker " + unicode(t), self.inbound, self.outbound, f)
-                self.threads.append(thread)
-        else:
-            # ASSUME functions IS A SINGLE FUNCTION
-            self.threads = []
-            for t in range(nvl(threads, 1)):
-                thread = worker_thread("worker " + unicode(t), self.inbound, self.outbound, functions)
-                self.threads.append(thread)
+            Log.error("Not supported anymore")
+
+        self.threads = []
+        for t in range(nvl(threads, 1)):
+            thread = worker_thread("worker " + unicode(t), self.inbound, self.outbound, functions)
+            self.threads.append(thread)
 
     def __enter__(self):
         return self

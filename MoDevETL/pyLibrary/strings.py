@@ -245,6 +245,14 @@ def _simple_expand(template, seq):
     return pattern.sub(replacer, template)
 
 
+delchars = {c.decode("latin1"): None for c in map(chr, range(256)) if not c.decode("latin1").isalnum()}
+def deformat(value):
+    """
+    REMOVE NON-ALPHANUMERIC CHARACTERS
+    """
+    return value.translate(delchars)
+
+
 def toString(val):
     if val == None:
         return ""
@@ -354,10 +362,16 @@ def apply_diff(text, diff, reverse=False):
 
 
 def utf82unicode(value):
+    """
+    WITH EXPLANATION FOR FAILURE
+    """
     try:
         return value.decode("utf8")
     except Exception, e:
         from .env.logs import Log, Except
+
+        if not isinstance(value, basestring):
+            Log.error("Can not convert {{type}} to unicode because it's not a string", {"type": type(value).__name__})
 
         e = Except.wrap(e)
         for i, c in enumerate(value):
@@ -367,7 +381,7 @@ def utf82unicode(value):
                 Log.error("Can not convert charcode {{c}} in string  index {{i}}", {"i": i, "c": ord(c)}, [e, Except.wrap(f)])
 
         try:
-            a = unicode(value.decode("latin1"))
+            latin1 = unicode(value.decode("latin1"))
             Log.error("Can not explain conversion failure, but seems to be latin1", e)
         except Exception, f:
             pass

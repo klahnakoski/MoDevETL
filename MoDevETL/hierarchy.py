@@ -11,16 +11,16 @@
 from __future__ import unicode_literals
 
 from datetime import timedelta, datetime
-from MoDevETL.util.cnv import CNV
-from MoDevETL.util.collections import MAX
-from MoDevETL.util.collections.relation import Relation
-from MoDevETL.util.env import startup
-from MoDevETL.util.env.elasticsearch import Cluster, Index
-from MoDevETL.util.env.logs import Log
-from MoDevETL.util.queries import Q
-from MoDevETL.util.queries.es_query import ESQuery
-from MoDevETL.util.struct import Struct, nvl
-from MoDevETL.util.times.timer import Timer
+from pyLibrary.cnv import CNV
+from pyLibrary.collections import MAX
+from pyLibrary.collections.relation import Relation
+from pyLibrary.env import startup
+from pyLibrary.env.elasticsearch import Cluster, Index
+from pyLibrary.env.logs import Log
+from pyLibrary.queries import Q
+from pyLibrary.queries.es_query import ESQuery
+from pyLibrary.struct import Struct, nvl
+from pyLibrary.times.timer import Timer
 
 
 MIN_DEPENDENCY_LIFETIME = 2 * 24 * 60 * 60 * 1000  # less than 2 days of dependency is ignored (mistakes happen)

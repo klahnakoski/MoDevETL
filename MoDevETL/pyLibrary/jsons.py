@@ -42,7 +42,12 @@ try:
     use_pypy = True
 except Exception, e:
     if use_pypy:
-        sys.stdout.write("The PyPy JSON serializer is in use!  Currently running CPython, not a good mix.")
+        sys.stdout.write(
+            "*********************************************************\n"
+            "** The PyLibrary JSON serializer for PyPy is in use!\n"
+            "** Currently running CPython: This will run sloooow!\n"
+            "*********************************************************\n"
+        )
 
     class UnicodeBuilder(list):
         def __init__(self, length=None):
@@ -104,58 +109,65 @@ class cPythonJSONEncoder(object):
 
 
 def _value2json(value, _buffer):
-    if value == None:
-        append(_buffer, u"null")
-        return
-    elif value is True:
-        append(_buffer, u"true")
-        return
-    elif value is False:
-        append(_buffer, u"false")
-        return
+    try:
+        if value == None:
+            append(_buffer, u"null")
+            return
+        elif value is True:
+            append(_buffer, u"true")
+            return
+        elif value is False:
+            append(_buffer, u"false")
+            return
 
-    type = value.__class__
-    if type in (dict, Struct):
-        if value:
-            _dict2json(value, _buffer)
+        type = value.__class__
+        if type in (dict, Struct):
+            if value:
+                _dict2json(value, _buffer)
+            else:
+                append(_buffer, u"{}")
+        elif type is str:
+            append(_buffer, u"\"")
+            try:
+                v = utf82unicode(value)
+            except Exception, e:
+                problem_serializing(value, e)
+
+            for c in v:
+                append(_buffer, ESCAPE_DCT.get(c, c))
+            append(_buffer, u"\"")
+        elif type is unicode:
+            append(_buffer, u"\"")
+            for c in value:
+                append(_buffer, ESCAPE_DCT.get(c, c))
+            append(_buffer, u"\"")
+        elif type in (int, long, Decimal):
+            append(_buffer, unicode(value))
+        elif type is float:
+            append(_buffer, unicode(repr(value)))
+        elif type in (set, list, tuple, StructList):
+            _list2json(value, _buffer)
+        elif type is date:
+            append(_buffer, unicode(long(time.mktime(value.timetuple()) * 1000)))
+        elif type is datetime:
+            append(_buffer, unicode(long(time.mktime(value.timetuple()) * 1000)))
+        elif type is timedelta:
+            append(_buffer, "\"")
+            append(_buffer, unicode(value.total_seconds()))
+            append(_buffer, "second\"")
+        elif hasattr(value, '__json__'):
+            j = value.__json__()
+            append(_buffer, j)
+        elif hasattr(value, '__iter__'):
+            _iter2json(value, _buffer)
         else:
-            append(_buffer, u"{}")
-    elif type is str:
-        append(_buffer, u"\"")
-        try:
-            v = utf82unicode(value)
-        except Exception, e:
-            problem_serializing(value, e)
+            from .env.logs import Log
 
-        for c in v:
-            append(_buffer, ESCAPE_DCT.get(c, c))
-        append(_buffer, u"\"")
-    elif type is unicode:
-        append(_buffer, u"\"")
-        for c in value:
-            append(_buffer, ESCAPE_DCT.get(c, c))
-        append(_buffer, u"\"")
-    elif type in (int, long, Decimal):
-        append(_buffer, unicode(value))
-    elif type is float:
-        append(_buffer, unicode(repr(value)))
-    elif type in (set, list, tuple, StructList):
-        _list2json(value, _buffer)
-    elif type is date:
-        append(_buffer, unicode(long(time.mktime(value.timetuple()) * 1000)))
-    elif type is datetime:
-        append(_buffer, unicode(long(time.mktime(value.timetuple()) * 1000)))
-    elif type is timedelta:
-        append(_buffer, "\"")
-        append(_buffer, unicode(value.total_seconds()))
-        append(_buffer, "second\"")
-    elif hasattr(value, '__json__'):
-        j = value.__json__()
-        append(_buffer, j)
-    elif hasattr(value, '__iter__'):
-        _iter2json(value, _buffer)
-    else:
-        raise Exception(repr(value) + " is not JSON serializable")
+            Log.error(repr(value) + " is not JSON serializable")
+    except Exception, e:
+        from .env.logs import Log
+
+        Log.error(repr(value) + " is not JSON serializable", e)
 
 
 def _list2json(value, _buffer):

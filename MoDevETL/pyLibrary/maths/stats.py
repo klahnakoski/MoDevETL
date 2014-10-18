@@ -150,6 +150,12 @@ class Stats(Struct):
     def __init__(self, **kwargs):
         Struct.__init__(self)
 
+        self.count = 0
+        self.mean = None
+        self.variance = None
+        self.skew = None
+        self.kurtosis = None
+
         if "samples" in kwargs:
             s = ZeroMoment2Stats(ZeroMoment.new_instance(kwargs["samples"]))
             self.count = s.count
@@ -205,6 +211,13 @@ class Stats(Struct):
     @property
     def std(self):
         return sqrt(self.variance)
+
+    @property
+    def __class__(self):
+        """
+        TRICK JSON SERIALIZATION (AND OTHERS) THAT THIS IS JUST ANOTHER Struct
+        """
+        return Struct
 
 
 class ZeroMoment(object):

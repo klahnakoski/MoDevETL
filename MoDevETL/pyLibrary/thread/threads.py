@@ -9,12 +9,14 @@
 #
 from __future__ import unicode_literals
 from __future__ import division
+from collections import deque
 
 from datetime import datetime, timedelta
 import thread
 import threading
 import time
 import sys
+import gc
 from ..struct import nvl, Struct
 
 # THIS THREADING MODULE IS PERMEATED BY THE please_stop SIGNAL.
@@ -65,8 +67,9 @@ class Queue(object):
         self.silent = silent
         self.keep_running = True
         self.lock = Lock("lock for queue")
-        self.queue = []
-        self.next_warning=datetime.utcnow()  # FOR DEBUGGING
+        self.queue = deque()
+        self.next_warning = datetime.utcnow()  # FOR DEBUGGING
+        self.gc_count = 0
 
     def __iter__(self):
         while self.keep_running:
@@ -128,7 +131,10 @@ class Queue(object):
         with self.lock:
             while self.keep_running:
                 if self.queue:
-                    value = self.queue.pop(0)
+                    value = self.queue.popleft()
+                    self.gc_count += 1
+                    if self.gc_count % 1000 == 0:
+                        gc.collect()
                     if value is Thread.STOP:  # SENDING A STOP INTO THE QUEUE IS ALSO AN OPTION
                         self.keep_running = False
                     return value
@@ -150,7 +156,7 @@ class Queue(object):
                     self.keep_running = False
 
             output = list(self.queue)
-            del self.queue[:]       # CLEAR
+            self.queue.clear()
             return output
 
     def close(self):

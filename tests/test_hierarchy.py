@@ -1,10 +1,10 @@
 import unittest
 from MoDevETL.hierarchy import to_fix_point
-from MoDevETL.util.cnv import CNV
-from MoDevETL.util.env.elasticsearch import ElasticSearch
-from MoDevETL.util.env.files import File
-from MoDevETL.util.env.logs import Log
-from MoDevETL.util.queries.es_query import ESQuery
+from pyLibrary.cnv import CNV
+from pyLibrary.env.elasticsearch import ElasticSearch
+from pyLibrary.env.files import File
+from pyLibrary.env.logs import Log
+from pyLibrary.queries.es_query import ESQuery
 
 
 class TestETL(unittest.TestCase):

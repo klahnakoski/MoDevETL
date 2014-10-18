@@ -183,18 +183,21 @@ class File(object):
         return self.append(content)
 
     def extend(self, content):
-        if not self.parent.exists:
-            self.parent.create()
-        with open(self._filename, "ab") as output_file:
-            for c in content:
-                if isinstance(c, str):
-                    from .logs import Log
+        try:
+            if not self.parent.exists:
+                self.parent.create()
+            with open(self._filename, "ab") as output_file:
+                for c in content:
+                    if isinstance(c, str):
+                        from .logs import Log
+                        Log.error("expecting to write unicode only")
 
-                    Log.error("expecting to write unicode only")
+                    output_file.write(c.encode("utf-8"))
+                    output_file.write(b"\n")
+        except Exception, e:
+            from ..env.logs import Log
 
-                output_file.write(c.encode("utf-8"))
-                output_file.write(b"\n")
-
+            Log.error("Could not write to file", e)
 
     def delete(self):
         try:

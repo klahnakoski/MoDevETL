@@ -42,3 +42,4 @@ nosetests.xml
 .idea
 results/logs/test_etl.log
 /MoDevETL/pyLibrary/.svn
+/pyLibrary/.svn

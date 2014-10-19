@@ -1,8 +1,8 @@
 {
 	"source" : {
-		"host" : "http://elasticsearch-private.bugs.scl3.mozilla.com",
+		"host" : "http://elasticsearch-zlb.bugs.scl3.mozilla.com",
 		"port" : "9200",
-		"index" : "private_bugs",
+		"index" : "public_bugs",
 		"type" : "bug_version",
 		"debug" : true,
 		"batch_size": 1000
@@ -10,7 +10,7 @@
 	"destination" : {
 		"host" : "http://localhost",
 //		"host" : "http://klahnakoski-es.corp.tor1.mozilla.com",
-//		"host" : "http://elasticsearch-private.bugs.scl3.mozilla.com",
+//		"host" : "http://elasticsearch-zlb.bugs.scl3.mozilla.com",
 		"port" : "9200",
 		"index" : "reviews",
 		"schema_file" : "resources/schema/review_type.json",
@@ -20,7 +20,7 @@
 		"debug" : true
 	},
 	"threads" : 4,
-//	"min_bug":53000,
+	"min_bug":300000,
 //	"max_bug":63000,
 	"debug" : {
 		"profile" : false,
@@ -32,7 +32,7 @@
 			},
 			{
 				"class" : "logging.handlers.RotatingFileHandler",
-				"filename" : "./results/logs/review_etl.log",
+				"filename" : "./results/logs/public_review1.log",
 				"maxBytes" : 10000000,
 				"backupCount" : 3,
 				"encoding" : "utf8"

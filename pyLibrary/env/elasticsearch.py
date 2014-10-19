@@ -314,6 +314,9 @@ class Cluster(object):
             settings.index = indexes[0].index
         return Index(settings)
 
+    def find_or_create_index(self, settings, schema=None, limit_replicas=None):
+        return self.get_or_create_index(settings, schema, limit_replicas)
+
     def get_index(self, settings):
         """
         TESTS THAT THE INDEX EXISTS BEFORE RETURNING A HANDLE

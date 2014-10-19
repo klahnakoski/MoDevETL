@@ -211,12 +211,21 @@ def full_etl(settings, sink, bugs):
 
 
 def main():
-    settings = startup.read_settings()
+    settings = startup.read_settings(defs={
+       "name": ["--restart", "--reset", "--redo"],
+       "help": "force a reprocessing of all data",
+       "action": "store_true",
+       "dest": "restart"
+    })
     Log.start(settings.debug)
 
     try:
         with startup.SingleInstance(flavor_id=settings.args.filename):
-            reviews = Cluster(settings.destination).create_index(settings.destination)
+            if settings.args.restart:
+                reviews = Cluster(settings.destination).create_index(settings.destination)
+            else:
+                reviews = Cluster(settings.destination).get_or_create_index(settings.destination)
+
             bugs = Cluster(settings.source).get_index(settings.source)
 
             with ESQuery(bugs) as esq:

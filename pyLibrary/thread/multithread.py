@@ -145,7 +145,7 @@ class worker_thread(Thread):
                 if self.in_queue.queue:
                     Log.warning("programmer error, queue not empty. {{num}} requests lost:\n{{requests}}", {
                         "num": len(self.in_queue.queue),
-                        "requests": self.in_queue.queue[:5:] + self.in_queue.queue[-5::]
+                        "requests": list(self.in_queue.queue)[:5:] + list(self.in_queue.queue)[-5::]
                     })
                 break
             if please_stop.is_go():

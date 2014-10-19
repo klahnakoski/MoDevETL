@@ -5,6 +5,7 @@
 		"index" : "private_bugs",
 		"type" : "bug_version",
 		"debug" : true,
+		"timeout": 300,
 		"batch_size": 1000
 	},
 	"destination" : {

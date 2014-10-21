@@ -366,7 +366,7 @@ class Cluster(object):
         indexes = sort([
             a.index
             for a in self.get_aliases()
-            if re.match(re.escape(alias) + "\\d{8}_\\d{6}", a.index) and not a.alias
+            if re.match(re.escape(alias) + r"\d{8}_\d{6}", a.index)
         ])
 
         if not indexes:

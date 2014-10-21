@@ -224,7 +224,7 @@ def main():
             if settings.args.restart:
                 reviews = Cluster(settings.destination).create_index(settings.destination)
             else:
-                reviews = Cluster(settings.destination).get_or_create_index(settings.destination)
+                reviews = Cluster(settings.destination).get_proto(settings.destination)
 
             bugs = Cluster(settings.source).get_index(settings.source)
 
@@ -258,8 +258,9 @@ def main():
                     })
                     m.execute(reversed([{"bugs": xrange(s, e)} for s, e in Q.intervals(min_bug, max_bug, size=1000)]))
 
-            reviews.add_alias()
-            reviews.delete_all_but_self()
+            if settings.args.restart:
+                reviews.add_alias()
+                reviews.delete_all_but_self()
     finally:
         Log.stop()
 

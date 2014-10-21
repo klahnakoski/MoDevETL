@@ -118,18 +118,6 @@ class Index(object):
             timeout=nvl(self.settings.timeout, 30)
         )
 
-    def get_proto(self, alias):
-        """
-        RETURN ALL INDEXES THAT ARE INTENDED TO BE GIVEN alias, BUT HAVE NO
-        ALIAS YET BECAUSE INCOMPLETE
-        """
-        output = sort([
-            a.index
-            for a in self.cluster.get_aliases()
-            if re.match(re.escape(alias) + "\\d{8}_\\d{6}", a.index) and not a.alias
-        ])
-        return output
-
     def get_index(self, alias):
         """
         RETURN THE INDEX USED BY THIS alias
@@ -368,6 +356,25 @@ class Cluster(object):
         time.sleep(2)
         es = Index(settings)
         return es
+
+    def get_proto(self, settings):
+        """
+        RETURN MOST RECENT INDEX THAT IS INTENDED TO BE GIVEN alias, BUT MAY
+        NOT YET BECAUSE LOADING IS INCOMPLETE
+        """
+        alias = nvl(settings.alias, settings.index)
+        indexes = sort([
+            a.index
+            for a in self.get_aliases()
+            if re.match(re.escape(alias) + "\\d{8}_\\d{6}", a.index) and not a.alias
+        ])
+
+        if not indexes:
+            Log.error("No prototype for alias {{alias}} found", {"alias": alias})
+
+        settings.alias = alias
+        settings.index = indexes.last()
+        return Index(settings)
 
     def delete_index(self, index=None):
         self.delete("/" + index)

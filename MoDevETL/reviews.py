@@ -34,13 +34,13 @@ TYPES = ["review", "superreview", "ui-review"]
 
 
 def full_etl(settings, sink, bugs):
-    with Timer("process block {{start}}", {"start":min(*bugs)}):
+    with Timer("process block {{start}}", {"start": min(bugs)}):
         es = elasticsearch.Index(settings.source)
         with ESQuery(es) as esq:
             versions = esq.query({
                 "from": "bugs",
                 "select": "*",
-                "where": {"terms": {"bug_id": list(bugs)}}
+                "where": {"terms": {"bug_id": bugs}}
             })
 
         starts = Q.run({
@@ -103,6 +103,29 @@ def full_etl(settings, sink, bugs):
                     ]}
                 ]}
         })
+
+        # SOME ATTACHMENTS GO MISSING, CLOSE THEM TOO
+        closed_bugs = {b.bug_id: b for b in Q.filter(versions, {"and": [# SOME BUGS ARE CLOSED WITHOUT REMOVING REVIEW
+            {"terms": {"bug_status": ["resolved", "verified", "closed"]}},
+            {"range": {"expires_on": {"gte": Date.now().milli}}}
+        ]})}
+
+        for s in starts:
+            if s.bug_id in closed_bugs:
+                e = closed_bugs[s.bug_id]
+                ends.append({
+                    "bug_id": e.bug_id,
+                    "bug_status": e.bug_status,
+                    "attach_id": s.attach_id,
+                    "modified_ts": e.modified_ts,
+                    "reviewer": s.reviewer,
+                    "request_type": s.request_type,
+                    "modified_by": e.modified_by,
+                    "product": e.product,
+                    "component": e.component,
+                    "review_end_reason": 'closed',
+                    "review_result": '?'
+                })
 
         # REVIEWS END WHEN REASSIGNED TO SOMEONE ELSE
         changes = Q.run({
@@ -256,7 +279,7 @@ def main():
                         "max": max_bug,
                         "step": batch_size
                     })
-                    m.execute(reversed([{"bugs": xrange(s, e)} for s, e in Q.intervals(min_bug, max_bug, size=1000)]))
+                    m.execute(reversed([{"bugs": range(s, e)} for s, e in Q.intervals(min_bug, max_bug, size=1000)]))
 
             if settings.args.restart:
                 reviews.add_alias()

@@ -20,6 +20,7 @@ from pyLibrary.env.logs import Log
 from pyLibrary.queries import Q
 from pyLibrary.queries.es_query import ESQuery
 from pyLibrary.struct import Struct, nvl
+from pyLibrary.times.dates import Date
 from pyLibrary.times.timer import Timer
 
 
@@ -54,7 +55,8 @@ def push_to_es(settings, data, dirty):
             "bug_id": bug_id,
             "parents": Q.sort(p),
             "children": Q.sort(c),
-            "descendants": Q.sort(d)
+            "descendants": Q.sort(d),
+            "etl": {"timestamp": Date.now().unix}
         }})
 
     dest = Index(settings.destination)
@@ -71,7 +73,7 @@ def full_etl(settings):
         "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
     })
     min_bug_id = MAX(min_bug_id-1000, 0)
-    # min_bug_id = 880000
+    min_bug_id = 0
 
     source = Index(settings.source)
     sourceq = ESQuery(source)
@@ -82,7 +84,7 @@ def full_etl(settings):
     max_bug_id = nvl(max_bug_id, 0)
 
     #FIRST, GET ALL MISSING BUGS
-    for s, e in Q.intervals(min_bug_id, max_bug_id, 10000):
+    for s, e in Q.reverse(list(Q.intervals(min_bug_id, max_bug_id, 10000))):
         with Timer("pull {{start}}..{{end}} from ES", {"start": s, "end": e}):
             children = sourceq.query({
                 "from": settings.source.alias,

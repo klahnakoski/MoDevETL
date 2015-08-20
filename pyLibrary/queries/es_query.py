@@ -51,9 +51,6 @@ class ESQuery(object):
             self.worker.join()
 
     def query(self, _query):
-        if not self.ready:
-            Log.error("Must use with clause for any instance of ESQuery")
-
         query = Query(_query, schema=self)
 
         for s in listwrap(query.select):

@@ -15,7 +15,7 @@ from datetime import timedelta, datetime
 from pyLibrary import convert
 from pyLibrary.collections import MAX
 from pyLibrary.collections.relation import Relation
-from pyLibrary.debugs import startup
+from pyLibrary.debugs import startup, constants
 from pyLibrary.debugs.logs import Log
 from pyLibrary.dot import coalesce, Dict
 from pyLibrary.env.elasticsearch import Index, Cluster
@@ -201,6 +201,7 @@ def to_fix_point(settings, destq, children):
 
 def main():
     settings = startup.read_settings()
+    constants.set(settings.constants)
     Log.start(settings.debug)
     with startup.SingleInstance(flavor_id=settings.args.filename):
         try:

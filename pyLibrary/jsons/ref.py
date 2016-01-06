@@ -20,7 +20,7 @@ from pyLibrary.dot import set_default, wrap, unwrap
 from pyLibrary.parsers import URL
 
 
-DEBUG = False
+DEBUG = True
 _convert = None
 _Log = None
 _Except = None
@@ -115,6 +115,9 @@ def _replace_ref(node, url):
 
         if ref.fragment:
             new_value = dot.get_attr(new_value, ref.fragment)
+
+        if DEBUG:
+            _Log.note("Replace {{ref}} with {{new_value}}", ref=ref, new_value=new_value)
 
         if not output:
             return new_value

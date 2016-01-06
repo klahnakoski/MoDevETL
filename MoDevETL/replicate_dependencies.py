@@ -10,18 +10,18 @@
 
 
 from datetime import datetime, timedelta
-from MoDevETL.util.collections import MIN, UNION
-from MoDevETL.util.env.elasticsearch import Cluster, Index
-from MoDevETL.util.struct import nvl
-from MoDevETL.util.thread.threads import ThreadedQueue
-from MoDevETL.util.times.timer import Timer
-from MoDevETL.util.cnv import CNV
-from MoDevETL.util.env.logs import Log
-from MoDevETL.util.queries import Q
-from MoDevETL.util.env import startup
-from MoDevETL.util.env.files import File
-from MoDevETL.util.collections.multiset import Multiset
 
+from pyLibrary import convert
+from pyLibrary.collections import Multiset, MIN
+from pyLibrary.debugs import startup
+from pyLibrary.debugs.logs import Log
+from pyLibrary.dot import coalesce
+from pyLibrary.env.elasticsearch import Cluster
+from pyLibrary.env.elasticsearch import Index
+from pyLibrary.env.files import File
+from pyLibrary.queries import qb
+from pyLibrary.thread.threads import ThreadedQueue
+from pyLibrary.times.timer import Timer
 
 # REPLICATION
 #
@@ -43,7 +43,7 @@ def get_last_updated(es):
                 "query": {"match_all": {}},
                 "filter": {
                     "range": {
-                        "modified_ts": {"gte": CNV.datetime2milli(far_back)}
+                        "modified_ts": {"gte": convert.datetime2milli(far_back)}
                     }}
             }},
             "from": 0,
@@ -53,10 +53,10 @@ def get_last_updated(es):
         })
 
         if results.facets.modified_ts.count == 0:
-            return CNV.milli2datetime(0)
-        return CNV.milli2datetime(results.facets.modified_ts.max)
+            return convert.milli2datetime(0)
+        return convert.milli2datetime(results.facets.modified_ts.max)
     except Exception, e:
-        return CNV.milli2datetime(0)
+        return convert.milli2datetime(0)
 
 
 def get_pending(es, since):
@@ -71,13 +71,13 @@ def get_pending(es, since):
     max_bug = int(result.facets.default.max)
     pending_bugs = None
 
-    for s, e in Q.intervals(0, max_bug + 1, 100000):
+    for s, e in qb.intervals(0, max_bug + 1, 100000):
         Log.note("Collect history for bugs from {{start}}..{{end}}", {"start": s, "end": e})
         result = es.search({
             "query": {"filtered": {
                 "query": {"match_all": {}},
                 "filter": {"and": [
-                    {"range": {"modified_ts": {"gte": CNV.datetime2milli(since)}}},
+                    {"range": {"modified_ts": {"gte": convert.datetime2milli(since)}}},
                     {"range": {"bug_id": {"gte": s, "lte": e}}}
                 ]}
             }},
@@ -109,14 +109,14 @@ def replicate(source, destination, pending, last_updated):
     COPY THE DEPENDENCY RECORDS TO THE destination
     NOTE THAT THE PUBLIC CLUSTER HAS HOLES, SO WE USE blocked TO FILL THEM
     """
-    for g, bugs in Q.groupby(pending, max_size=BATCH_SIZE):
+    for g, bugs in qb.groupby(pending, max_size=BATCH_SIZE):
         with Timer("Replicate {{num_bugs}} bug versions", {"num_bugs": len(bugs)}):
             data = source.search({
                 "query": {"filtered": {
                     "query": {"match_all": {}},
                     "filter": {"and": [
                         {"terms": {"bug_id": set(bugs)}},
-                        {"range": {"expires_on": {"gte": CNV.datetime2milli(last_updated)}}},
+                        {"range": {"expires_on": {"gte": convert.datetime2milli(last_updated)}}},
                         {"or": [
                             {"exists": {"field": "dependson"}},
                             {"exists": {"field": "blocked"}}
@@ -146,13 +146,13 @@ def replicate(source, destination, pending, last_updated):
                 destination.extend(d2)
 
             with Timer("filter"):
-                d4 = Q.run({
+                d4 = qb.run({
                     "from": data.hits.hits.fields,
                     "where": {"exists": {"field": "blocked"}}
                 })
 
             with Timer("select"):
-                d3 = Q.run({
+                d3 = qb.run({
                     "from": d4,
                     "select": [
                         {"name": "bug_id", "value": "blocked."},  # SINCE blocked IS A LIST, ARE SELECTING THE LIST VALUES, AND EFFECTIVELY PERFORMING A JOIN
@@ -188,17 +188,17 @@ def main(settings):
     # GET LAST UPDATED
     from_file = None
     if time_file.exists:
-        from_file = CNV.milli2datetime(CNV.value2int(time_file.read()))
+        from_file = convert.milli2datetime(convert.value2int(time_file.read()))
     from_es = get_last_updated(destination) - timedelta(hours=1)
-    last_updated = MIN(nvl(from_file, CNV.milli2datetime(0)), from_es)
+    last_updated = MIN(coalesce(from_file, convert.milli2datetime(0)), from_es)
     Log.note("updating records with modified_ts>={{last_updated}}", {"last_updated": last_updated})
 
     pending = get_pending(source, last_updated)
-    with ThreadedQueue(destination, size=1000) as data_sink:
+    with ThreadedQueue(destination, batch_size=1000) as data_sink:
         replicate(source, data_sink, pending, last_updated)
 
     # RECORD LAST UPDATED
-    time_file.write(unicode(CNV.datetime2milli(current_time)))
+    time_file.write(unicode(convert.datetime2milli(current_time)))
 
 
 def start():

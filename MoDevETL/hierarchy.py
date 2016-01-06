@@ -77,14 +77,18 @@ def push_to_es(settings, data, dirty):
 
 
 def full_etl(settings):
-    Cluster(settings.destination).get_or_create_index(settings=settings.destination, schema=convert.json2value(convert.value2json(SCHEMA), leaves=True), limit_replicas=True)
+    schema = convert.json2value(convert.value2json(SCHEMA), leaves=True)
+    Cluster(settings.destination).get_or_create_index(settings=settings.destination, schema=schema, limit_replicas=True)
     destq = FromES(settings.destination)
-    min_bug_id = destq.query({
-        "from": coalesce(settings.destination.alias, settings.destination.index),
-        "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
-    })
-    min_bug_id = MAX(min_bug_id-1000, 0)
-    min_bug_id = 0
+    if settings.incremental:
+        min_bug_id = destq.query({
+            "from": coalesce(settings.destination.alias, settings.destination.index),
+            "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
+        })
+
+        min_bug_id = MAX(min_bug_id-1000, 0)
+    else:
+        min_bug_id = 0
 
     sourceq = FromES(settings.source)
     max_bug_id = sourceq.query({
@@ -124,7 +128,7 @@ def full_etl(settings):
                     {"exists": "blocked"}
                 ]}
             ]},
-            "limit": 10000
+            "limit": 100000
         })
 
     to_fix_point(settings, destq, children.data)

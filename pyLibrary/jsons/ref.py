@@ -20,7 +20,7 @@ from pyLibrary.dot import set_default, wrap, unwrap
 from pyLibrary.parsers import URL
 
 
-DEBUG = True
+DEBUG = False
 _convert = None
 _Log = None
 _Except = None

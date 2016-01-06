@@ -130,8 +130,8 @@ def _replace_ref(node, url):
         return output
     elif isinstance(node, list):
         output = [_replace_ref(n, url) for n in node]
-        if all(p[0] is p[1] for p in zip(output, node)):
-            return node
+        # if all(p[0] is p[1] for p in zip(output, node)):
+        #     return node
         return output
 
     return node
@@ -176,8 +176,8 @@ def _replace_locals(node, doc_path):
 
     elif isinstance(node, list):
         candidate = [_replace_locals(n, [n] + doc_path) for n in node]
-        if all(p[0] is p[1] for p in zip(candidate, node)):
-            return node
+        # if all(p[0] is p[1] for p in zip(candidate, node)):
+        #     return node
         return candidate
 
     return node

@@ -86,7 +86,7 @@ def full_etl(settings):
             "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
         })
 
-        min_bug_id = MAX(min_bug_id-1000, 0)
+        min_bug_id = int(MAX(min_bug_id-1000, 0))
     else:
         min_bug_id = 0
 
@@ -95,7 +95,7 @@ def full_etl(settings):
         "from": coalesce(settings.source.alias, settings.source.index),
         "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
     }) + 1
-    max_bug_id = coalesce(max_bug_id, 0)
+    max_bug_id = int(coalesce(max_bug_id, 0))
 
     # FIRST, GET ALL MISSING BUGS
     for s, e in qb.reverse(list(qb.intervals(min_bug_id, max_bug_id, 10000))):

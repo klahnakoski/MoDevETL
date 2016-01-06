@@ -59,8 +59,11 @@ def get(url):
     doc = wrap({"$ref": url})
 
     phase1 = _replace_ref(doc, URL(""))  # BLANK URL ONLY WORKS IF url IS ABSOLUTE
-    phase2 = _replace_locals(phase1, [phase1])
-    return wrap(phase2)
+    try:
+        phase2 = _replace_locals(phase1, [phase1])
+        return wrap(phase2)
+    except Exception, e:
+        _Log.error("problem replacing locals in\n{{phase1}}", phase1=phase1)
 
 
 def expand(doc, doc_url):

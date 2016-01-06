@@ -1,5 +1,5 @@
 {
-    "incremental": false,
+    "incremental": true,
     "source": {
         "host": "http://elasticsearch-private.bugs.scl3.mozilla.com",
         "port": 9200,

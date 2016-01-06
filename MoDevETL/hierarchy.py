@@ -11,39 +11,55 @@
 from __future__ import unicode_literals
 
 from datetime import timedelta, datetime
-from pyLibrary.cnv import CNV
+
+from pyLibrary import convert
 from pyLibrary.collections import MAX
 from pyLibrary.collections.relation import Relation
-from pyLibrary.env import startup
-from pyLibrary.env.elasticsearch import Cluster, Index
-from pyLibrary.env.logs import Log
-from pyLibrary.queries import Q
-from pyLibrary.queries.es_query import ESQuery
-from pyLibrary.struct import Struct, nvl
+from pyLibrary.debugs import startup
+from pyLibrary.debugs.logs import Log
+from pyLibrary.dot import coalesce, Dict
+from pyLibrary.env.elasticsearch import Index, Cluster
+from pyLibrary.queries import qb
+from pyLibrary.queries.qb_usingES import FromES
 from pyLibrary.times.dates import Date
 from pyLibrary.times.timer import Timer
 
-
 MIN_DEPENDENCY_LIFETIME = 2 * 24 * 60 * 60 * 1000  # less than 2 days of dependency is ignored (mistakes happen)
 
-def pull_from_es(settings, destq, all_parents, all_children, all_descendants, work_queue):
-    #LOAD PARENTS FROM ES
+def listwrap(value):
+    if isinstance(value, list):
+        return value
+    elif value == None:
+        return []
+    else:
+        return [value]
 
-    for g, r in Q.groupby(Q.sort(work_queue), size=100):
+
+def pull_from_es(settings, destq, all_parents, all_children, all_descendants, work_queue):
+    # LOAD PARENTS FROM ES
+
+    for g, r in qb.groupby(qb.sort(work_queue), size=100):
         result = destq.query({
             "from": settings.destination.index,
             "select": "*",
             "where": {"terms": {"bug_id": r}}
         })
-        for r in result:
-            all_parents.extend(r.bug_id, r.parents)
-            all_children.extend(r.bug_id, r.children)
-            all_descendants.extend(r.bug_id, r.descendants)
+        for r in result.data:
+            all_parents.extend(r.bug_id, listwrap(r.parents))
+            all_children.extend(r.bug_id, listwrap(r.children))
+            all_descendants.extend(r.bug_id, listwrap(r.descendants))
 
+
+destination = None
 
 def push_to_es(settings, data, dirty):
-    #PREP RECORDS FOR ES
-    records = []
+    global destination
+
+    if not destination:
+        index = Index(settings.destination)
+        destination = index.threaded_queue(batch_size=100)
+
+    # PREP RECORDS FOR ES
     for bug_id in dirty:
         d = data.descendants[bug_id]
         if not d:
@@ -51,40 +67,34 @@ def push_to_es(settings, data, dirty):
 
         p = data.parents[bug_id]
         c = data.children[bug_id]
-        records.append({"id": bug_id, "value": {
+        destination.add({"id": bug_id, "value": {
             "bug_id": bug_id,
-            "parents": Q.sort(p),
-            "children": Q.sort(c),
-            "descendants": Q.sort(d),
+            "parents": qb.sort(p),
+            "children": qb.sort(c),
+            "descendants": qb.sort(d),
             "etl": {"timestamp": Date.now().unix}
         }})
 
-    dest = Index(settings.destination)
-    for g, r in Q.groupby(records, size=200):
-        with Timer("Push {{num}} records to ES", {"num": len(r)}):
-            dest.extend(r)
-
 
 def full_etl(settings):
-    dest = Cluster(settings.destination).get_or_create_index(settings.destination, CNV.JSON2object(CNV.object2JSON(SCHEMA), paths=True), limit_replicas=True)
-    destq = ESQuery(dest)
+    Cluster(settings.destination).get_or_create_index(settings=settings.destination, schema=convert.json2value(convert.value2json(SCHEMA), leaves=True), limit_replicas=True)
+    destq = FromES(settings.destination)
     min_bug_id = destq.query({
-        "from": nvl(settings.destination.alias, settings.destination.index),
+        "from": coalesce(settings.destination.alias, settings.destination.index),
         "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
     })
     min_bug_id = MAX(min_bug_id-1000, 0)
     min_bug_id = 0
 
-    source = Index(settings.source)
-    sourceq = ESQuery(source)
+    sourceq = FromES(settings.source)
     max_bug_id = sourceq.query({
-        "from": nvl(settings.source.alias, settings.source.index),
+        "from": coalesce(settings.source.alias, settings.source.index),
         "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
     }) + 1
-    max_bug_id = nvl(max_bug_id, 0)
+    max_bug_id = coalesce(max_bug_id, 0)
 
-    #FIRST, GET ALL MISSING BUGS
-    for s, e in Q.reverse(list(Q.intervals(min_bug_id, max_bug_id, 10000))):
+    # FIRST, GET ALL MISSING BUGS
+    for s, e in qb.reverse(list(qb.intervals(min_bug_id, max_bug_id, 10000))):
         with Timer("pull {{start}}..{{end}} from ES", {"start": s, "end": e}):
             children = sourceq.query({
                 "from": settings.source.alias,
@@ -92,30 +102,32 @@ def full_etl(settings):
                 "where": {"and": [
                     {"range": {"bug_id": {"gte": s, "lt": e}}},
                     {"or": [
-                        {"exists": {"field": "dependson"}},
-                        {"exists": {"field": "blocked"}}
+                        {"exists": "dependson"},
+                        {"exists": "blocked"}
                     ]}
-                ]}
+                ]},
+                "limit": 10000
             })
 
         with Timer("fixpoint work"):
-            to_fix_point(settings, destq, children)
+            to_fix_point(settings, destq, children.data)
 
-    #PROCESS RECENT CHANGES
+    # PROCESS RECENT CHANGES
     with Timer("pull recent dependancies from ES"):
         children = sourceq.query({
             "from": settings.source.alias,
             "select": ["bug_id", "dependson", "blocked"],
             "where": {"and": [
-                {"range": {"modified_ts": {"gte": CNV.datetime2milli(datetime.utcnow() - timedelta(days=7))}}},
+                {"range": {"modified_ts": {"gte": convert.datetime2milli(datetime.utcnow() - timedelta(days=7))}}},
                 {"or": [
-                    {"exists": {"field": "dependson"}},
-                    {"exists": {"field": "blocked"}}
+                    {"exists": "dependson"},
+                    {"exists": "blocked"}
                 ]}
-            ]}
+            ]},
+            "limit": 10000
         })
 
-    to_fix_point(settings, destq, children)
+    to_fix_point(settings, destq, children.data)
 
 
 def to_fix_point(settings, destq, children):
@@ -129,19 +141,19 @@ def to_fix_point(settings, destq, children):
     load_queue = set()
     dirty = set()
 
-    #LOAD GRAPH
+    # LOAD GRAPH
     for r in children:
         me = r.bug_id
         if r.expires_on-r.modified_ts < MIN_DEPENDENCY_LIFETIME:
             continue
 
         load_queue.add(me)
-        childs = r.dependson
+        childs = listwrap(r.dependson)
         for c in childs:
             load_queue.add(c)
             all_parents.add(c, me)
             all_children.add(me, c)
-        parents = r.blocked
+        parents = listwrap(r.blocked)
         for p in parents:
             load_queue.add(p)
             all_parents.add(me, p)
@@ -176,7 +188,7 @@ def to_fix_point(settings, destq, children):
             work_queue = next_queue
 
     Log.note("{{num}} new records to ES", {"num": len(dirty)})
-    push_to_es(settings, Struct(
+    push_to_es(settings, Dict(
         parents=all_parents,
         children=all_children,
         descendants=all_descendants

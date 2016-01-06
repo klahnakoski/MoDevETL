@@ -7,84 +7,237 @@
 #
 # Author: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
-from __future__ import unicode_literals
+from __future__ import absolute_import
 from __future__ import division
-from .. import struct
-from .dimensions import Dimension
-from .domains import Domain
-from ..collections import AND, reverse
-from ..env.logs import Log
-from ..queries import MVEL, _normalize_select, INDEX_CACHE
-from ..queries.filters import TRUE_FILTER, simplify
-from ..struct import nvl, Struct, EmptyList, split_field, join_field, StructList, Null
-from ..structs.wraps import wrap, unwrap, listwrap
+from __future__ import unicode_literals
+
+from collections import Mapping
+
+from pyLibrary.collections import AND
+from pyLibrary.debugs.logs import Log
+from pyLibrary.dot import coalesce, Null
+from pyLibrary.dot import wrap, unwrap, listwrap
+from pyLibrary.dot.dicts import Dict
+from pyLibrary.dot.lists import DictList
+from pyLibrary.maths import Math
+from pyLibrary.queries import wrap_from
+from pyLibrary.queries.containers import Container
+from pyLibrary.queries.dimensions import Dimension
+from pyLibrary.queries.domains import Domain, is_keyword
+from pyLibrary.queries.expressions import TRUE_FILTER, simplify_esfilter, query_get_all_vars
+
+DEFAULT_LIMIT = 10
+MAX_LIMIT = 10000
+
+qb = None
+_Column = None
+
+
+def _late_import():
+    global qb
+    global _Column
+
+    from pyLibrary.queries.meta import Column as _Column
+    from pyLibrary.queries import qb
+
+    _ = qb
+    _ = _Column
 
 
 class Query(object):
+    __slots__ = ["frum", "select", "edges", "groupby", "where", "window", "sort", "limit", "having", "format", "isLean"]
+
     def __new__(cls, query, schema=None):
         if isinstance(query, Query):
             return query
-        return object.__new__(cls)
+        output = object.__new__(cls)
+        for s in Query.__slots__:
+            setattr(output, s, None)
+        return output
 
     def __init__(self, query, schema=None):
         """
         NORMALIZE QUERY SO IT CAN STILL BE JSON
         """
-        if isinstance(query, Query):
+        if isinstance(query, Query) or query == None:
             return
 
         object.__init__(self)
         query = wrap(query)
 
-        self.name = query.name
+        self.format = query.format
+        self.frum = wrap_from(query["from"], schema=schema)
 
         select = query.select
         if isinstance(select, list):
-            select = wrap([unwrap(_normalize_select(s, schema=schema)) for s in select])
+            names = set()
+            new_select = []
+            for s in select:
+                ns = _normalize_select(s, schema=schema)
+                if ns.name in names:
+                    Log.error("two select have the same name")
+                names.add(ns.name)
+                new_select.append(unwrap(ns))
+            self.select = wrap(new_select)
         elif select:
-            select = _normalize_select(select, schema=schema)
+            self.select = _normalize_select(select, schema=schema)
         else:
-            select = StructList()
-        self.select2index = {}  # MAP FROM NAME TO data INDEX
-        for i, s in enumerate(listwrap(select)):
-            self.select2index[s.name] = i
-        self.select = select
+            if query.edges or query.groupby:
+                self.select = Dict(name="count", value=".", aggregate="count")
+            else:
+                self.select = Dict(name=".", value=".", aggregate="none")
 
-        self.edges = _normalize_edges(query.edges, schema=schema)
-        self.frum = _normalize_from(query["from"], schema=schema)
+        if query.groupby and query.edges:
+            Log.error("You can not use both the `groupby` and `edges` clauses in the same query!")
+        elif query.edges:
+            self.edges = _normalize_edges(query.edges, schema=schema)
+            self.groupby = None
+        elif query.groupby:
+            self.edges = None
+            self.groupby = _normalize_groupby(query.groupby, schema=schema)
+        else:
+            self.edges = []
+            self.groupby = None
+
         self.where = _normalize_where(query.where, schema=schema)
-
         self.window = [_normalize_window(w) for w in listwrap(query.window)]
-
+        self.having = None
         self.sort = _normalize_sort(query.sort)
-        self.limit = query.limit
+        self.limit = Math.min(MAX_LIMIT, coalesce(query.limit, DEFAULT_LIMIT))
+        if not Math.is_integer(self.limit) or self.limit < 0:
+            Log.error("Expecting limit >= 0")
+
         self.isLean = query.isLean
 
 
+        # DEPTH ANALYSIS - LOOK FOR COLUMN REFERENCES THAT MAY BE DEEPER THAN
+        # THE from SOURCE IS.
+        # TODO: IGNORE REACHING INTO THE NON-NESTED TYPES
+        if isinstance(self.frum, list):
+            if not qb:
+                _late_import()
+            columns = qb.get_columns(self.frum)
+        elif isinstance(self.frum, Container):
+            columns = self.frum.get_columns(table=self.frum.name)
+        else:
+            columns = []
+
+        query_path = coalesce(self.frum.query_path, ".")
+        vars = query_get_all_vars(self, exclude_where=True)  # WE WILL EXCLUDE where VARIABLES
+        for c in columns:
+            if c.name in vars and not query_path.startswith(coalesce(listwrap(c.nested_path)[0], "")):
+                Log.error("This query, with variable {{var_name}} is too deep", var_name=c.name)
+
     @property
     def columns(self):
-        return self.select + self.edges
+        return listwrap(self.select) + coalesce(self.edges, self.groupby)
+
+    @property
+    def query_path(self):
+        return "."
 
     def __getitem__(self, item):
         if item == "from":
             return self.frum
-        return Struct.__getitem__(self, item)
+        return Dict.__getitem__(self, item)
 
     def copy(self):
         output = object.__new__(Query)
-        source = object.__getattribute__(self, "__dict__")
-        dest = object.__getattribute__(output, "__dict__")
-        struct.set_default(dest, source)
+        for s in Query.__slots__:
+            setattr(output, s, getattr(self, s))
         return output
+
+    def as_dict(self):
+        output = wrap({s: getattr(self, s) for s in Query.__slots__})
+        return output
+
+
+canonical_aggregates = {
+    "min": "minimum",
+    "max": "maximum",
+    "add": "sum",
+    "avg": "average",
+    "mean": "average"
+}
 
 
 def _normalize_selects(selects, schema=None):
     if isinstance(selects, list):
-        return wrap([_normalize_select(s, schema=schema) for s in selects])
+        output = wrap([_normalize_select(s, schema=schema) for s in selects])
+
+        exists = set()
+        for s in output:
+            if s.name in exists:
+                Log.error("{{name}} has already been defined",  name= s.name)
+            exists.add(s.name)
+        return output
     else:
         return _normalize_select(selects, schema=schema)
 
 
+def _normalize_select(select, schema=None):
+    if not _Column:
+        _late_import()
+
+    if isinstance(select, basestring):
+        select = select.rstrip(".")
+        if not select:
+            return Dict(
+                name=".",
+                value="*",
+                aggregate="none"
+            )
+        if select == "*":
+            return Dict(
+                name=".",
+                value="*",
+                aggregate="none"
+            )
+
+        if schema:
+            s = schema[select]
+            if s:
+                if isinstance(s, _Column):
+                    return Dict(
+                        name=select,
+                        value=select,
+                        aggregate="none"
+                    )
+                else:
+                    #EXPECTING DIMENSION
+                    return s.getSelect()
+
+        if select.endswith(".*"):
+            name = select[:-2]
+        else:
+            name = select
+
+        return Dict(
+            name=name,
+            value=select,
+            aggregate="none"
+        )
+    else:
+        select = wrap(select)
+        output = select.copy()
+        if not select.value:
+            output.value = "."
+            output.name = coalesce(select.name, select.aggregate)
+        elif isinstance(select.value, basestring):
+            if select.value == ".":
+                output.name = coalesce(select.name, select.aggregate)
+            else:
+                output.name = coalesce(select.name, select.value, select.aggregate)
+        elif not output.name:
+            Log.error("Must give name to each column in select clause")
+
+        if not output.name:
+            Log.error("expecting select to have a name: {{select}}",  select= select)
+        if output.name.endswith(".*"):
+            output.name = output.name[:-2]
+
+        output.aggregate = coalesce(canonical_aggregates.get(select.aggregate), select.aggregate, "none")
+        return output
 
 
 def _normalize_edges(edges, schema=None):
@@ -92,38 +245,93 @@ def _normalize_edges(edges, schema=None):
 
 
 def _normalize_edge(edge, schema=None):
+    if not _Column:
+        _late_import()
+
     if isinstance(edge, basestring):
         if schema:
             e = schema[edge]
             if e:
-                return Struct(
-                    name=edge,
-                    domain=e.getDomain()
-                )
-        return Struct(
+                if isinstance(e, _Column):
+                    return Dict(
+                        name=edge,
+                        value=edge,
+                        allowNulls=True,
+                        domain=_normalize_domain(schema=schema)
+                    )
+                elif isinstance(e.fields, list) and len(e.fields) == 1:
+                    return Dict(
+                        name=e.name,
+                        value=e.fields[0],
+                        allowNulls=True,
+                        domain=e.getDomain()
+                    )
+                else:
+                    return Dict(
+                        name=e.name,
+                        allowNulls=True,
+                        domain=e.getDomain()
+                    )
+        return Dict(
             name=edge,
             value=edge,
+            allowNulls=True,
             domain=_normalize_domain(schema=schema)
         )
     else:
-        return Struct(
-            name=nvl(edge.name, edge.value),
+        edge = wrap(edge)
+        if not edge.name and not isinstance(edge.value, basestring):
+            Log.error("You must name compound edges: {{edge}}", edge=edge)
+
+        if isinstance(edge.value, (list, set)) and not edge.domain:
+            # COMPLEX EDGE IS SHORT HAND
+            domain = _normalize_domain(schema=schema)
+            domain.dimension = Dict(fields=edge.value)
+
+            return Dict(
+                name=edge.name,
+                allowNulls=bool(coalesce(edge.allowNulls, True)),
+                domain=domain
+            )
+
+        domain = _normalize_domain(edge.domain, schema=schema)
+        return Dict(
+            name=coalesce(edge.name, edge.value),
             value=edge.value,
             range=edge.range,
-            allowNulls=False if edge.allowNulls is False else True,
-            domain=_normalize_domain(edge.domain, schema=schema)
+            allowNulls=bool(coalesce(edge.allowNulls, True)),
+            domain=domain
         )
 
 
-def _normalize_from(frum, schema=None):
-    frum = wrap(frum)
+def _normalize_groupby(groupby, schema=None):
+    if groupby == None:
+        return None
+    return [_normalize_group(e, schema=schema) for e in listwrap(groupby)]
 
-    if isinstance(frum, basestring):
-        return Struct(name=frum)
-    elif isinstance(frum, dict) and (frum["from"] or isinstance(frum["from"], (list, set))):
-        return Query(frum, schema=schema)
+
+def _normalize_group(edge, schema=None):
+    if isinstance(edge, basestring):
+        return wrap({
+            "name": edge,
+            "value": edge,
+            "allowNulls": True,
+            "domain": {"type": "default"}
+        })
     else:
-        return frum
+        edge = wrap(edge)
+        if (edge.domain and edge.domain.type != "default") or edge.allowNulls != None:
+            Log.error("groupby does not accept complicated domains")
+
+        if not edge.name and not isinstance(edge.value, basestring):
+            Log.error("You must name compound edges: {{edge}}",  edge= edge)
+
+        return wrap({
+            "name": coalesce(edge.name, edge.value),
+            "value": edge.value,
+            "allowNulls": True,
+            "domain": {"type": "default"}
+        })
 
 
 def _normalize_domain(domain=None, schema=None):
@@ -139,12 +347,16 @@ def _normalize_domain(domain=None, schema=None):
     if not domain.name:
         domain = domain.copy()
         domain.name = domain.type
-    return Domain(**struct.unwrap(domain))
+
+    if not isinstance(domain.partitions, list):
+        domain.partitions = list(domain.partitions)
+
+    return Domain(**domain)
 
 
 def _normalize_window(window, schema=None):
-    return Struct(
-        name=nvl(window.name, window.value),
+    return Dict(
+        name=coalesce(window.name, window.value),
         value=window.value,
         edges=[_normalize_edge(e, schema) for e in listwrap(window.edges)],
         sort=_normalize_sort(window.sort),
@@ -158,18 +370,19 @@ def _normalize_range(range):
     if range == None:
         return None
 
-    return Struct(
+    return Dict(
         min=range.min,
         max=range.max
     )
 
 
 def _normalize_where(where, schema=None):
+    where = wrap(where)
     if where == None:
         return TRUE_FILTER
     if schema == None:
         return where
-    where = simplify(_where_terms(where, where, schema))
+    where = simplify_esfilter(_where_terms(where, where, schema))
     return where
 
 
@@ -177,13 +390,13 @@ def _map_term_using_schema(master, path, term, schema_edges):
     """
     IF THE WHERE CLAUSE REFERS TO FIELDS IN THE SCHEMA, THEN EXPAND THEM
     """
-    output = StructList()
+    output = DictList()
     for k, v in term.items():
         dimension = schema_edges[k]
         if isinstance(dimension, Dimension):
             domain = dimension.getDomain()
             if dimension.fields:
-                if isinstance(dimension.fields, dict):
+                if isinstance(dimension.fields, Mapping):
                     # EXPECTING A TUPLE
                     for local_field, es_field in dimension.fields.items():
                         local_value = v[local_field]
@@ -193,7 +406,7 @@ def _map_term_using_schema(master, path, term, schema_edges):
                             output.append({"term": {es_field: local_value}})
                     continue
 
-                if len(dimension.fields) == 1 and MVEL.isKeyword(dimension.fields[0]):
+                if len(dimension.fields) == 1 and is_keyword(dimension.fields[0]):
                     # SIMPLE SINGLE-VALUED FIELD
                     if domain.getPartByKey(v) is domain.NULL:
                         output.append({"missing": {"field": dimension.fields[0]}})
@@ -201,10 +414,10 @@ def _map_term_using_schema(master, path, term, schema_edges):
                         output.append({"term": {dimension.fields[0]: v}})
                     continue
 
-                if AND(MVEL.isKeyword(f) for f in dimension.fields):
+                if AND(is_keyword(f) for f in dimension.fields):
                     # EXPECTING A TUPLE
                     if not isinstance(v, tuple):
-                        Log.error("expecing {{name}}={{value}} to be a tuple", {"name": k, "value": v})
+                        Log.error("expecing {{name}}={{value}} to be a tuple",  name= k,  value= v)
                     for i, f in enumerate(dimension.fields):
                         vv = v[i]
                         if vv == None:
@@ -212,7 +425,7 @@ def _map_term_using_schema(master, path, term, schema_edges):
                         else:
                             output.append({"term": {f: vv}})
                     continue
-            if len(dimension.fields) == 1 and MVEL.isKeyword(dimension.fields[0]):
+            if len(dimension.fields) == 1 and is_keyword(dimension.fields[0]):
                 if domain.getPartByKey(v) is domain.NULL:
                     output.append({"missing": {"field": dimension.fields[0]}})
                 else:
@@ -226,7 +439,7 @@ def _map_term_using_schema(master, path, term, schema_edges):
                 continue
             else:
                 Log.error("not expected")
-        elif isinstance(v, dict):
+        elif isinstance(v, Mapping):
             sub = _map_term_using_schema(master, path + [k], v, schema_edges[k])
             output.append(sub)
             continue
@@ -234,43 +447,46 @@ def _map_term_using_schema(master, path, term, schema_edges):
         output.append({"term": {k: v}})
     return {"and": output}
 
-def _move_nested_term(master, where, schema):
-    """
-    THE WHERE CLAUSE CAN CONTAIN NESTED PROPERTY REFERENCES, THESE MUST BE MOVED
-    TO A NESTED FILTER
-    """
-    items = where.term.items()
-    if len(items) != 1:
-        Log.error("Expecting only one term")
-    k, v = items[0]
-    nested_path = _get_nested_path(k, schema)
-    if nested_path:
-        return {"nested": {
-            "path": nested_path,
-            "query": {"filtered": {
-                "query": {"match_all": {}},
-                "filter": {"and": [
-                    {"term": {k: v}}
-                ]}
-            }}
-        }}
-    return where
 
-def _get_nested_path(field, schema):
-    if MVEL.isKeyword(field):
-        field = join_field([schema.es.alias]+split_field(field))
-        for i, f in reverse(enumerate(split_field(field))):
-            path = join_field(split_field(field)[0:i+1:])
-            if path in INDEX_CACHE:
-                return join_field(split_field(path)[1::])
-    return None
+# def _move_nested_term(master, where, schema):
+#     """
+#     THE WHERE CLAUSE CAN CONTAIN NESTED PROPERTY REFERENCES, THESE MUST BE MOVED
+#     TO A NESTED FILTER
+#     """
+#     items = where.term.items()
+#     if len(items) != 1:
+#         Log.error("Expecting only one term")
+#     k, v = items[0]
+#     nested_path = _get_nested_path(k, schema)
+#     if nested_path:
+#         return {"nested": {
+#             "path": nested_path,
+#             "query": {"filtered": {
+#                 "query": {"match_all": {}},
+#                 "filter": {"and": [
+#                     {"term": {k: v}}
+#                 ]}
+#             }}
+#         }}
+#     return where
+
+
+# def _get_nested_path(field, schema):
+#     if is_keyword(field):
+#         field = join_field([schema.es.alias] + split_field(field))
+#         for i, f in reverse(enumerate(split_field(field))):
+#             path = join_field(split_field(field)[0:i + 1:])
+#             if path in INDEX_CACHE:
+#                 return unwraplist(join_field(split_field(path)[1::]))
+#     return None
+#
 
 def _where_terms(master, where, schema):
     """
     USE THE SCHEMA TO CONVERT DIMENSION NAMES TO ES FILTERS
     master - TOP LEVEL WHERE (FOR PLACING NESTED FILTERS)
     """
-    if isinstance(where, dict):
+    if isinstance(where, Mapping):
         if where.term:
             # MAP TERM
             try:
@@ -280,7 +496,7 @@ def _where_terms(master, where, schema):
                 Log.error("programmer problem?", e)
         elif where.terms:
             # MAP TERM
-            output = StructList()
+            output = DictList()
             for k, v in where.terms.items():
                 if not isinstance(v, (list, set)):
                     Log.error("terms filter expects list of values")
@@ -296,7 +512,7 @@ def _where_terms(master, where, schema):
                     except Exception, e:
                         Log.error("programmer error", e)
                     fields = domain.dimension.fields
-                    if isinstance(fields, dict):
+                    if isinstance(fields, Mapping):
                         or_agg = []
                         for vv in v:
                             and_agg = []
@@ -306,7 +522,7 @@ def _where_terms(master, where, schema):
                                     and_agg.append({"term": {es_field: vvv}})
                             or_agg.append({"and": and_agg})
                         output.append({"or": or_agg})
-                    elif isinstance(fields, list) and len(fields) == 1 and MVEL.isKeyword(fields[0]):
+                    elif isinstance(fields, list) and len(fields) == 1 and is_keyword(fields[0]):
                         output.append({"terms": {fields[0]: v}})
                     elif domain.partitions:
                         output.append({"or": [domain.getPartByKey(vv).esfilter for vv in v]})
@@ -326,14 +542,17 @@ def _normalize_sort(sort=None):
     """
 
     if not sort:
-        return EmptyList
+        return DictList.EMPTY
 
-    output = StructList()
+    output = DictList()
     for s in listwrap(sort):
-        if isinstance(s, basestring):
-            output.append({"field": s, "sort": 1})
+        if isinstance(s, basestring) or Math.is_integer(s):
+            output.append({"value": s, "sort": 1})
+        elif list(set(s.values()))[0] == "desc" and not s.sort and not s.value:
+            for v, d in s.items():
+                output.append({"value": v, "sort": -1})
         else:
-            output.append({"field": nvl(s.field, s.value), "sort": nvl(sort_direction[s.sort], 1)})
+            output.append({"value": coalesce(s.value, s.field), "sort": coalesce(sort_direction[s.sort], 1)})
     return wrap(output)
 
 
@@ -347,3 +566,4 @@ sort_direction = {
     None: 1,
     Null: 1
 }
+

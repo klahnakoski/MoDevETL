@@ -1,26 +1,27 @@
 import unittest
+
 from MoDevETL.hierarchy import to_fix_point
-from pyLibrary.cnv import CNV
-from pyLibrary.env.elasticsearch import ElasticSearch
+from pyLibrary import convert
+from pyLibrary.debugs.logs import Log
+from pyLibrary.env.elasticsearch import Index
 from pyLibrary.env.files import File
-from pyLibrary.env.logs import Log
-from pyLibrary.queries.es_query import ESQuery
+from pyLibrary.queries.qb_usingES import FromES
 
 
 class TestETL(unittest.TestCase):
     def setUp(self):
-        self.settings = CNV.JSON2object(File("settings.json").read())
+        self.settings = convert.json2value(File("settings.json").read())
         Log.start(self.settings.debug)
 
     def tearDown(self):
         Log.stop()
 
     def test_single_add(self):
-        source = ElasticSearch(self.settings.source)
-        sourceq = ESQuery(source)
+        source = Index(self.settings.source)
+        sourceq = FromES(source)
 
-        dest = ElasticSearch(self.settings.destination)
-        destq = ESQuery(dest)
+        dest = Index(self.settings.destination)
+        destq = FromES(dest)
 
         children = sourceq.query({
             "from": self.settings.source.alias,

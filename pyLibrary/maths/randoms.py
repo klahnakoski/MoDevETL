@@ -3,9 +3,11 @@
 
 from __future__ import unicode_literals
 from __future__ import division
+from __future__ import absolute_import
 import random
 import string
 
+from pyLibrary.dot import unwrap
 
 SIMPLE_ALPHABET = string.ascii_letters + string.digits
 SEED = random.Random()
@@ -32,6 +34,10 @@ class Random(object):
         return SEED.randrange(*args)
 
     @staticmethod
+    def range(start, stop, *args):
+        return SEED.randrange(start, stop, *args)
+
+    @staticmethod
     def float(*args):
         if args:
             return SEED.random()*args[0]
@@ -54,8 +60,22 @@ class Random(object):
             del data[n]
         return output
 
-
     @staticmethod
     def bytes(count):
         output = bytearray(SEED.randrange(256) for i in range(count))
         return output
+
+    @staticmethod
+    def weight(weights):
+        """
+        RETURN RANDOM INDEX INTO WEIGHT ARRAY, GIVEN WEIGHTS
+        """
+        total = sum(weights)
+
+        p = SEED.random()
+        acc = 0
+        for i, w in enumerate(weights):
+            acc += w / total
+            if p < acc:
+                return i
+        return len(weights) - 1

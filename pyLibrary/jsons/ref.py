@@ -120,10 +120,14 @@ def _replace_ref(node, url):
             _Log.note("Replace {{ref}} with {{new_value}}", ref=ref, new_value=new_value)
 
         if not output:
-            return new_value
+            output = new_value
         else:
-            return unwrap(set_default(output, new_value))
+            output = unwrap(set_default(output, new_value))
 
+        if DEBUG:
+            _Log.note("Return {{output}}", output=output)
+
+        return output
     elif isinstance(node, list):
         output = [_replace_ref(n, url) for n in node]
         if all(p[0] is p[1] for p in zip(output, node)):

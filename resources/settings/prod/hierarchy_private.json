@@ -1,42 +1,47 @@
 {
-    "incremental": true,
-    "source": {
-        "host": "http://elasticsearch-private.bugs.scl3.mozilla.com",
-        "port": 9200,
-        "index": "private_bugs",
-        "type": "bug_version",
-        "debug": false
-    },
-    "destination": {
-        "host": "http://elasticsearch-private.bugs.scl3.mozilla.com",
-        "port": 9200,
-        "index": "bug_hierarchy",
-        "type": "bug_hierarchy",
-        "debug": false,
-        "read_only": false
-    },
-    "debug": {
-        "trace": true,
-        "log": [
-            {
-                "log_type": "stream",
-                "stream": "sys.stdout"
-            },
-            {
-                "class": "logging.handlers.RotatingFileHandler",
-                "filename": "./results/logs/hierarchy_etl.log",
-                "maxBytes": 10000000,
-                "backupCount": 3,
-                "encoding": "utf8"
-            },
-            {
-                "log_type": "email",
-                "from_address": "klahnakoski@mozilla.com",
-                "to_address": "klahnakoski@mozilla.com",
-                "subject": "[ALERT][Toronto]Problem with private hierarchy",
-                "$ref": "file://~/private.json#email"
-            }
+	"incremental": true,
+	"constants": {
+		"pyLibrary.env.http.default_headers": {
+			"Referer": "https://wiki.mozilla.org/BMO/ElasticSearch"
+		}
+	},
+	"source": {
+		"host": "http://elasticsearch-private.bugs.scl3.mozilla.com",
+		"port": 9200,
+		"index": "private_bugs",
+		"type": "bug_version",
+		"debug": false
+	},
+	"destination": {
+		"host": "http://elasticsearch-private.bugs.scl3.mozilla.com",
+		"port": 9200,
+		"index": "bug_hierarchy",
+		"type": "bug_hierarchy",
+		"debug": false,
+		"read_only": false
+	},
+	"debug": {
+		"trace": true,
+		"log": [
+			{
+				"log_type": "stream",
+				"stream": "sys.stdout"
+			},
+			{
+				"class": "logging.handlers.RotatingFileHandler",
+				"filename": "./results/logs/hierarchy_etl.log",
+				"maxBytes": 10000000,
+				"backupCount": 3,
+				"encoding": "utf8"
+			},
+			{
+				"log_type": "email",
+				"from_address": "klahnakoski@mozilla.com",
+				"to_address": "klahnakoski@mozilla.com",
+				"subject": "[ALERT][Toronto]Problem with private hierarchy",
+				"$ref": "file://~/private.json#email"
+			}
 
-        ]
-    }
+		]
+	}
 }

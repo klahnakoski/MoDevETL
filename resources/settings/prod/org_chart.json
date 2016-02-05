@@ -10,7 +10,7 @@
 		"port": 9200,
 		"index": "org_chart",
 		"limit_replicas": false,
-		"debug": true,
+		"debug": false,
 		"schema": {
 			"settings": {
 				"index.number_of_shards": 1,

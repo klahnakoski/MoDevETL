@@ -5,6 +5,9 @@
 			"$ref": "file://~/private.json#phonebook"
 		}
 	},
+	"constants":{
+		"pyLibrary.env.http.default_headers":{"Referer":"https://wiki.mozilla.org/Auto-tools/Projects/DevelopmentMetrics"}
+	},
 	"destination": {
 		"host": "http://elasticsearch-private.bugs.scl3.mozilla.com",
 		"port": 9200,

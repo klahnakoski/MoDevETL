@@ -5,6 +5,9 @@
 			"$ref": "file://~/private.json#phonebook"
 		}
 	},
+	"constants":{
+		"pyLibrary.env.http.default_headers":{"Referer":"https://wiki.mozilla.org/Auto-tools/Projects/DevelopmentMetrics"}
+	},
 	"destination": {
 		"host": "http://localhost",
 		"port": 9200,

@@ -20,13 +20,6 @@
             {
                 "log_type": "stream",
                 "stream": "sys.stdout"
-            },
-            {
-                "class": "logging.handlers.RotatingFileHandler",
-                "filename": "./results/logs/hierarchy_etl.log",
-                "maxBytes": 10000000,
-                "backupCount": 3,
-                "encoding": "utf8"
             }
         ]
     }

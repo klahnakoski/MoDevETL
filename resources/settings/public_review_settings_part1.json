@@ -26,7 +26,14 @@
 	"debug" : {
 		"profile" : false,
 		"trace" : true,
-		"log" : [
+		"log": [
+			{
+				"log_type": "email",
+				"from_address": "klahnakoski@mozilla.com",
+				"to_address": "klahnakoski@mozilla.com",
+				"subject": "[ALERT][Toronto]Problem with Review ETL",
+				"$ref": "file://~/private.json#email"
+			},
 			{
 				"log_type" : "stream",
 				"stream" : "sys.stdout"

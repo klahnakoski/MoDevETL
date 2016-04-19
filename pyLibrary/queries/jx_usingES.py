@@ -52,7 +52,7 @@ class FromES(Container):
             return Container.__new__(cls)
 
     @use_settings
-    def __init__(self, host, index, type=None, alias=None, name=None, port=9200, read_only=True, settings=None):
+    def __init__(self, host, index, type=None, alias=None, name=None, port=9200, read_only=True, typed=None, settings=None):
         Container.__init__(self, None)
         if not containers.config.default:
             containers.config.default.settings = settings
@@ -67,9 +67,12 @@ class FromES(Container):
         self.settings.type = self._es.settings.type
         self.edges = Dict()
         self.worker = None
-        self._columns = self.get_columns(table_name=index)
-        # SWITCH ON TYPED MODE
-        self.typed = any(c.name in ("$value", "$object") for c in self._columns)
+        if typed == None:
+            self._columns = self.get_columns(table_name=index)
+            # SWITCH ON TYPED MODE
+            self.typed = any(c.name in ("$value", "$object") for c in self._columns)
+        else:
+            self.typed = typed
 
     @property
     def schema(self):

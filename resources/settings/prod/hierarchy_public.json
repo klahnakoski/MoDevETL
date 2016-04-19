@@ -35,11 +35,11 @@
 				"encoding": "utf8"
 			},
 			{
-				"log_type": "email",
+				"log_type": "ses",
+				"$ref": "file://~/private.json#aws_credentials",
 				"from_address": "klahnakoski@mozilla.com",
 				"to_address": "klahnakoski@mozilla.com",
-				"subject": "[ALERT][Toronto]Problem with public hierarchy",
-				"$ref": "file://~/private.json#email"
+				"subject": "[ALERT][Toronto]Problem with public hierarchy"
 			}
 
 		]

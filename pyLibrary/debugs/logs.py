@@ -159,6 +159,14 @@ class Log(object):
         log_context=None,
         **more_params
     ):
+        """
+        :param template: *string* human readable string with placeholders for parameters
+        :param default_params: *dict* parameters to fill in template
+        :param stack_depth:  *int* how many calls you want popped off the stack to report the *true* caller
+        :param log_context: *dict* extra key:value pairs for your convenience
+        :param more_params: *any more parameters (which will overwrite default_params)
+        :return:
+        """
         if len(template) > 10000:
             template = template[:10000]
 
@@ -199,6 +207,15 @@ class Log(object):
         log_context=None,
         **more_params
     ):
+        """
+        :param template: *string* human readable string with placeholders for parameters
+        :param default_params: *dict* parameters to fill in template
+        :param cause: *Exception* for chaining
+        :param stack_depth:  *int* how many calls you want popped off the stack to report the *true* caller
+        :param log_context: *dict* extra key:value pairs for your convenience
+        :param more_params: *any more parameters (which will overwrite default_params)
+        :return:
+        """
         if isinstance(default_params, BaseException):
             cause = default_params
             default_params = {}
@@ -226,6 +243,14 @@ class Log(object):
         log_context=None,
         **more_params
     ):
+        """
+        :param template: *string* human readable string with placeholders for parameters
+        :param default_params: *dict* parameters to fill in template
+        :param stack_depth:  *int* how many calls you want popped off the stack to report the *true* caller
+        :param log_context: *dict* extra key:value pairs for your convenience
+        :param more_params: *any more parameters (which will overwrite default_params)
+        :return:
+        """
         # USE replace() AS POOR MAN'S CHILD TEMPLATE
 
         template = ("*" * 80) + "\n" + indent(template, prefix="** ").strip() + "\n" + ("*" * 80)
@@ -246,6 +271,14 @@ class Log(object):
         log_context=None,
         **more_params
     ):
+        """
+        :param template: *string* human readable string with placeholders for parameters
+        :param default_params: *dict* parameters to fill in template
+        :param stack_depth:  *int* how many calls you want popped off the stack to report the *true* caller
+        :param log_context: *dict* extra key:value pairs for your convenience
+        :param more_params: *any more parameters (which will overwrite default_params)
+        :return:
+        """
         return Log.alarm(
             template,
             default_params=default_params,
@@ -264,10 +297,21 @@ class Log(object):
         log_context=None,
         **more_params
     ):
+        """
+        :param template: *string* human readable string with placeholders for parameters
+        :param default_params: *dict* parameters to fill in template
+        :param cause: *Exception* for chaining
+        :param stack_depth:  *int* how many calls you want popped off the stack to report the *true* caller
+        :param log_context: *dict* extra key:value pairs for your convenience
+        :param more_params: *any more parameters (which will overwrite default_params)
+        :return:
+        """
         if isinstance(default_params, BaseException):
             cause = default_params
             default_params = {}
 
+        if "values" in more_params.keys():
+            Log.error("Can not handle a logging parameter by name `values`")
         params = dict(unwrap(default_params), **more_params)
         cause = unwraplist([Except.wrap(c) for c in listwrap(cause)])
         trace = exceptions.extract_stack(stack_depth + 1)
@@ -292,6 +336,14 @@ class Log(object):
     ):
         """
         raise an exception with a trace for the cause too
+
+        :param template: *string* human readable string with placeholders for parameters
+        :param default_params: *dict* parameters to fill in template
+        :param cause: *Exception* for chaining
+        :param stack_depth:  *int* how many calls you want popped off the stack to report the *true* caller
+        :param log_context: *dict* extra key:value pairs for your convenience
+        :param more_params: *any more parameters (which will overwrite default_params)
+        :return:
         """
         if default_params and isinstance(listwrap(default_params)[0], BaseException):
             cause = default_params
@@ -316,10 +368,19 @@ class Log(object):
         default_params={},  # parameters for template
         cause=None,  # pausible cause
         stack_depth=0,
+        log_context=None,
         **more_params
     ):
         """
         SEND TO STDERR
+
+        :param template: *string* human readable string with placeholders for parameters
+        :param default_params: *dict* parameters to fill in template
+        :param cause: *Exception* for chaining
+        :param stack_depth:  *int* how many calls you want popped off the stack to report the *true* caller
+        :param log_context: *dict* extra key:value pairs for your convenience
+        :param more_params: *any more parameters (which will overwrite default_params)
+        :return:
         """
         if default_params and isinstance(listwrap(default_params)[0], BaseException):
             cause = default_params
@@ -338,9 +399,9 @@ class Log(object):
             if not error_mode:
                 cls.error_mode = True
                 Log.note(
-                    "{{error}}",
+                    "{{error|unicode}}",
                     error=e,
-                    log_context={"context": exceptions.WARNING},
+                    log_context=set_default({"context": exceptions.FATAL}, log_context),
                     stack_depth=stack_depth + 1
                 )
         except Exception:

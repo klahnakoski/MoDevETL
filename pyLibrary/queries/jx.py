@@ -8,9 +8,10 @@
 # Author: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 
-from __future__ import unicode_literals
-from __future__ import division
 from __future__ import absolute_import
+from __future__ import division
+from __future__ import unicode_literals
+
 import __builtin__
 from collections import Mapping
 from types import GeneratorType
@@ -18,45 +19,49 @@ from types import GeneratorType
 from pyLibrary import dot, convert
 from pyLibrary.collections import UNION, MIN
 from pyLibrary.debugs.logs import Log
+from pyLibrary.dot import listwrap, wrap, unwrap
 from pyLibrary.dot import set_default, Null, Dict, split_field, coalesce, join_field
 from pyLibrary.dot.lists import DictList
-from pyLibrary.dot import listwrap, wrap, unwrap
 from pyLibrary.dot.objects import DictObject
 from pyLibrary.maths import Math
 from pyLibrary.queries import flat_list, query, group_by
 from pyLibrary.queries.containers import Container
-from pyLibrary.queries.cubes.aggs import cube_aggs
-from pyLibrary.queries.expressions import TRUE_FILTER, FALSE_FILTER, compile_expression, qb_expression_to_function
+from pyLibrary.queries.containers.cube import Cube
+from pyLibrary.queries.expression_compiler import compile_expression
+from pyLibrary.queries.expressions import TRUE_FILTER, FALSE_FILTER, jx_expression_to_function, TupleOp
 from pyLibrary.queries.flat_list import FlatList
 from pyLibrary.queries.index import Index
-from pyLibrary.queries.query import Query, _normalize_selects, sort_direction, _normalize_select
-from pyLibrary.queries.containers.cube import Cube
+from pyLibrary.queries.query import QueryOp, _normalize_selects, sort_direction
 from pyLibrary.queries.unique_index import UniqueIndex
 
 # A COLLECTION OF DATABASE OPERATORS (RELATIONAL ALGEBRA OPERATORS)
-# qb QUERY DOCUMENTATION: https://github.com/klahnakoski/qb/tree/master/docs
-# START HERE: https://github.com/klahnakoski/qb/blob/master/docs/Qb_Reference.md
+# JSON QUERY EXPRESSION DOCUMENTATION: https://github.com/klahnakoski/jx/tree/master/docs
+# START HERE: https://github.com/klahnakoski/jx/blob/master/docs/jx_reference.md
 # TODO: USE http://docs.sqlalchemy.org/en/latest/core/tutorial.html AS DOCUMENTATION FRAMEWORK
 
 _Column = None
 _merge_type = None
+
+
+def get(expr):
+    """
+    RETURN FUNCTION FOR EXPRESSION
+    """
+    return jx_expression_to_function(expr)
+
 
 def run(query, frum=None):
     """
     THIS FUNCTION IS SIMPLY SWITCHING BASED ON THE query["from"] CONTAINER,
     BUT IT IS ALSO PROCESSING A list CONTAINER; SEPARATE TO A ListContainer
     """
-    query = Query(query)
+    query = QueryOp.wrap(query)
     frum = coalesce(frum, query["from"])
     if isinstance(frum, Container):
         return frum.query(query)
     elif isinstance(frum, (list, set, GeneratorType)):
         frum = wrap(list(frum))
-    elif isinstance(frum, Cube):
-        if is_aggs(query):
-            return cube_aggs(frum, query)
-
-    elif isinstance(frum, Query):
+    elif isinstance(frum, QueryOp):
         frum = run(frum)
     else:
         Log.error("Do not know how to handle {{type}}",  type=frum.__class__.__name__)
@@ -83,8 +88,8 @@ def run(query, frum=None):
         if isinstance(frum, Cube):
             frum = list(frum.values())
 
-        for param in query.window:
-            window(frum, param)
+        for w in query.window:
+            window(frum, w)
 
     # AT THIS POINT frum IS IN LIST FORMAT, NOW PACKAGE RESULT
     if query.format == "cube":
@@ -253,29 +258,6 @@ def _tuple_deep(v, field, depth, record):
 
     f = field.value.last()
     return 0, None, record + (v.get(f), )
-
-
-def select_one(record, selection):
-    """
-    APPLY THE selection TO A SINGLE record
-    """
-    record = wrap(record)
-    selection = wrap(selection)
-
-    if isinstance(selection, Mapping):
-        selection = wrap(selection)
-        return record[selection.value]
-    elif isinstance(selection, basestring):
-        return record[selection]
-    elif isinstance(selection, list):
-        output = Dict()
-        for f in selection:
-            f = _normalize_select(f)
-            output[f.name] = record[f.value]
-        return output
-    else:
-        Log.error("Do not know how to handle")
-
 
 
 def select(data, field_name):
@@ -447,10 +429,12 @@ def _select_deep_meta(field, depth):
 
 
 def get_columns(data, leaves=False):
+    # TODO Split this into two functions
     if not leaves:
         return wrap([{"name": n} for n in UNION(set(d.keys()) for d in data)])
     else:
         return wrap([{"name": leaf} for leaf in set(leaf for row in data for leaf, _ in row.leaves())])
+
 
 _ = """
 DEEP ITERATOR FOR NESTED DOCUMENTS
@@ -488,7 +472,7 @@ def _deeper_iterator(columns, nested_path, path, data):
             leaf = join_field(split_field(path) + [k])
             c = columns.get(leaf)
             if not c:
-                c = columns[leaf] = _Column(name=leaf, type=type_to_name[v.__class__], table=None, abs_name=leaf)
+                c = columns[leaf] = _Column(name=leaf, type=type_to_name[v.__class__], table=None, es_column=leaf)
             c.type = _merge_type[c.type][type_to_name[v.__class__]]
             if c.type == "nested" and not nested_path[0].startswith(leaf + "."):
                 if leaf.startswith(nested_path[0] + ".") or leaf == nested_path[0] or not nested_path[0]:
@@ -536,30 +520,21 @@ def sort(data, fieldnames=None):
             if isinstance(fieldnames, (basestring, int)):
                 fieldnames = wrap({"value": fieldnames, "sort": 1})
 
-            # EXPECTING {"field":f, "sort":i} FORMAT
+            # EXPECTING {"value":f, "sort":i} FORMAT
             fieldnames.sort = sort_direction.get(fieldnames.sort, 1)
             fieldnames.value = coalesce(fieldnames.value, fieldnames.field)
             if fieldnames.value == None:
                 Log.error("Expecting sort to have 'value' attribute")
 
-            if fieldnames.value == ".":
-                #VALUE COMPARE
-                def _compare_v(l, r):
-                    return value_compare(l, r, fieldnames.sort)
-                return DictList([unwrap(d) for d in sorted(data, cmp=_compare_v)])
-            elif isinstance(fieldnames.value, Mapping):
-                func = qb_expression_to_function(fieldnames.value)
-                def _compare_o(left, right):
-                    return value_compare(func(coalesce(left)), func(coalesce(right)), fieldnames.sort)
-                return DictList([unwrap(d) for d in sorted(data, cmp=_compare_o)])
-            else:
-                def _compare_o(left, right):
-                    return value_compare(coalesce(left)[fieldnames.value], coalesce(right)[fieldnames.value], fieldnames.sort)
-                return DictList([unwrap(d) for d in sorted(data, cmp=_compare_o)])
+            accessor = jx_expression_to_function(fieldnames.value)
+
+            def _compare_o(left, right):
+                return value_compare(accessor(left), accessor(right), fieldnames.sort)
+            return DictList([unwrap(d) for d in sorted(data, cmp=_compare_o)])
 
         formal = query._normalize_sort(fieldnames)
         for f in formal:
-            f.func = qb_expression_to_function(f.value)
+            f.func = jx_expression_to_function(f.value)
 
         def comparer(left, right):
             left = coalesce(left)
@@ -604,7 +579,7 @@ def value_compare(l, r, ordering=1):
     elif isinstance(l, Mapping):
         if isinstance(r, Mapping):
             for k in set(l.keys()) | set(r.keys()):
-                c = value_compare(l[k], r[k]) * ordering
+                c = value_compare(l.get(k), r.get(k)) * ordering
                 if c != 0:
                     return c
             return 0
@@ -645,7 +620,7 @@ def filter(data, where):
         return data.filter(where)
 
     if isinstance(data, (list, set)):
-        temp = qb_expression_to_function(where)
+        temp = jx_expression_to_function(where)
         dd = wrap(data)
         return [d for i, d in enumerate(data) if temp(wrap(d), i, dd)]
     else:
@@ -965,10 +940,10 @@ def window(data, param):
     name = param.name            # column to assign window function result
     edges = param.edges          # columns to gourp by
     where = param.where          # DO NOT CONSIDER THESE VALUES
-    sortColumns = param.sort            # columns to sort by
-    calc_value = wrap_function(qb_expression_to_function(param.value)) # function that takes a record and returns a value (for aggregation)
+    sortColumns = param.sort     # columns to sort by
+    calc_value = wrap_function(compile_expression(param.value.to_python()))  # function that takes a record and returns a value (for aggregation)
     aggregate = param.aggregate  # WindowFunction to apply
-    _range = param.range          # of form {"min":-10, "max":0} to specify the size and relative position of window
+    _range = param.range         # of form {"min":-10, "max":0} to specify the size and relative position of window
 
     data = filter(data, where)
 
@@ -981,7 +956,7 @@ def window(data, param):
         return
 
     if not aggregate or aggregate == "none":
-        for _, values in groupby(data, edges.value):
+        for _, values in groupby(data, TupleOp("tuple", edges.value)):
             if not values:
                 continue     # CAN DO NOTHING WITH THIS ZERO-SAMPLE
 

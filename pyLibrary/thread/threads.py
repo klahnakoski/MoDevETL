@@ -11,22 +11,26 @@
 # THIS SIGNAL IS IMPORTANT FOR PROPER SIGNALLING WHICH ALLOWS
 # FOR FAST AND PREDICTABLE SHUTDOWN AND CLEANUP OF THREADS
 
-from __future__ import unicode_literals
-from __future__ import division
 from __future__ import absolute_import
-from collections import deque
-from copy import copy
-from datetime import datetime, timedelta
+from __future__ import division
+from __future__ import unicode_literals
+
+import sys
 import thread
 import threading
 import time
-import sys
+
+import types
+from collections import deque
+from copy import copy
+from datetime import datetime, timedelta
 
 from pyLibrary import strings
+from pyLibrary.debugs.exceptions import Except
+from pyLibrary.debugs.profiles import CProfiler
 from pyLibrary.dot import coalesce, Dict
 from pyLibrary.times.dates import Date
-from pyLibrary.times.durations import SECOND, MINUTE, Duration
-
+from pyLibrary.times.durations import SECOND, Duration
 
 _Log = None
 _Except = None
@@ -446,66 +450,55 @@ class Thread(object):
         try:
             self.children.remove(child)
         except Exception, e:
-            _Log.error("not expected", e)
+            # happens when multiple joins on same thread
+            pass
 
     def _run(self):
-        if _Log.cprofiler:
-            import cProfile
-            _Log.note("starting cprofile for thread {{thread}}", thread=self.name)
+        with CProfiler():
 
-            self.cprofiler = cProfile.Profile()
-            self.cprofiler.enable()
+            self.id = thread.get_ident()
+            with ALL_LOCK:
+                ALL[self.id] = self
 
-        self.id = thread.get_ident()
-        with ALL_LOCK:
-            ALL[self.id] = self
-
-        try:
-            if self.target is not None:
-                a, k, self.args, self.kwargs = self.args, self.kwargs, None, None
-                response = self.target(*a, **k)
-                with self.synch_lock:
-                    self.end_of_thread = Dict(response=response)
-        except Exception, e:
-            with self.synch_lock:
-                self.end_of_thread = Dict(exception=_Except.wrap(e))
             try:
-                _Log.fatal("Problem in thread {{name|quote}}", name=self.name, cause=e)
-            except Exception, f:
-                sys.stderr.write("ERROR in thread: " + str(self.name) + " " + str(e) + "\n")
-        finally:
-            try:
-                children = copy(self.children)
-                for c in children:
-                    try:
-                        c.stop()
-                    except Exception:
-                        pass
-
-                for c in children:
-                    try:
-                        c.join()
-                    except Exception, _:
-                        pass
-
-                self.stopped.go()
-                del self.target, self.args, self.kwargs
-                with ALL_LOCK:
-                    del ALL[self.id]
-
-                if self.cprofiler:
-                    _Log.note("accumulate thread's cprofile statistics")
-                    import pstats
-
-                    self.cprofiler.disable()
-                    _Log.cprofiler_stats.add(pstats.Stats(self.cprofiler))
-                    del self.cprofiler
+                if self.target is not None:
+                    a, k, self.args, self.kwargs = self.args, self.kwargs, None, None
+                    response = self.target(*a, **k)
+                    with self.synch_lock:
+                        self.end_of_thread = Dict(response=response)
             except Exception, e:
-                if DEBUG:
-                    _Log.warning("problem with thread {{name|quote}}", cause=e, name=self.name)
+                with self.synch_lock:
+                    self.end_of_thread = Dict(exception=_Except.wrap(e))
+                try:
+                    _Log.fatal("Problem in thread {{name|quote}}", name=self.name, cause=e)
+                except Exception:
+                    sys.stderr.write(b"ERROR in thread: " + str(self.name) + b" " + str(e) + b"\n")
             finally:
-                if DEBUG:
-                    _Log.note("thread {{name|quote}} is done", name=self.name)
+                try:
+                    children = copy(self.children)
+                    for c in children:
+                        try:
+                            c.stop()
+                        except Exception:
+                            pass
+
+                    for c in children:
+                        try:
+                            c.join()
+                        except Exception, _:
+                            pass
+
+                    self.stopped.go()
+                    del self.target, self.args, self.kwargs
+                    with ALL_LOCK:
+                        del ALL[self.id]
+
+                except Exception, e:
+                    if DEBUG:
+                        _Log.warning("problem with thread {{name|quote}}", cause=e, name=self.name)
+                finally:
+                    if DEBUG:
+                        _Log.note("thread {{name|quote}} is done", name=self.name)
 
     def is_alive(self):
         return not self.stopped
@@ -729,8 +722,8 @@ class Signal(object):
 
 class ThreadedQueue(Queue):
     """
-    TODO: Check that this queue is not dropping items at shutdown
     DISPATCH TO ANOTHER (SLOWER) queue IN BATCHES OF GIVEN size
+    TODO: Check that this queue is not dropping items at shutdown
     """
 
     def __init__(
@@ -740,7 +733,10 @@ class ThreadedQueue(Queue):
         batch_size=None,  # THE MAX SIZE OF BATCHES SENT TO THE SLOW QUEUE
         max_size=None,  # SET THE MAXIMUM SIZE OF THE QUEUE, WRITERS WILL BLOCK IF QUEUE IS OVER THIS LIMIT
         period=None,  # MAX TIME BETWEEN FLUSHES TO SLOWER QUEUE
-        silent=False  # WRITES WILL COMPLAIN IF THEY ARE WAITING TOO LONG
+        silent=False,  # WRITES WILL COMPLAIN IF THEY ARE WAITING TOO LONG
+        error_target=None  # CALL THIS WITH ERROR **AND THE LIST OF OBJECTS ATTEMPTED**
+                           # BE CAREFUL!  THE THREAD MAKING THE CALL WILL NOT BE YOUR OWN!
+                           # DEFAULT BEHAVIOUR: THIS WILL KEEP RETRYING WITH WARNINGS
     ):
         if not _Log:
             _late_import()
@@ -771,6 +767,8 @@ class ThreadedQueue(Queue):
                             queue.extend(_buffer)
                             please_stop.go()
                             break
+                        elif isinstance(item, types.FunctionType):
+                            item()
                         elif item is not None:
                             _buffer.append(item)
 
@@ -784,15 +782,28 @@ class ThreadedQueue(Queue):
                         queue.extend(_buffer)
                         please_stop.go()
                         break
+                    elif isinstance(item, types.FunctionType):
+                        item()
                     elif item is not None:
                         _buffer.append(item)
 
                 except Exception, e:
-                    _Log.warning(
-                        "Unexpected problem",
-                        name=name,
-                        cause=e
-                    )
+                    e = Except.wrap(e)
+                    if error_target:
+                        try:
+                            error_target(e, _buffer)
+                        except Exception, f:
+                            _Log.warning(
+                                "`error_target` should not throw, just deal",
+                                name=name,
+                                cause=f
+                            )
+                    else:
+                        _Log.warning(
+                            "Unexpected problem",
+                            name=name,
+                            cause=e
+                        )
 
                 try:
                     if len(_buffer) >= batch_size or now > next_time:
@@ -806,12 +817,23 @@ class ThreadedQueue(Queue):
                                 next_time = now + bit_more_time
 
                 except Exception, e:
-                    _Log.warning(
-                        "Problem with {{name}} pushing {{num}} items to data sink",
-                        name=name,
-                        num=len(_buffer),
-                        cause=e
-                    )
+                    e = Except.wrap(e)
+                    if error_target:
+                        try:
+                            error_target(e, _buffer)
+                        except Exception, f:
+                            _Log.warning(
+                                "`error_target` should not throw, just deal",
+                                name=name,
+                                cause=f
+                            )
+                    else:
+                        _Log.warning(
+                            "Problem with {{name}} pushing {{num}} items to data sink",
+                            name=name,
+                            num=len(_buffer),
+                            cause=e
+                        )
 
             if _buffer:
                 # ONE LAST PUSH, DO NOT HAVE TIME TO DEAL WITH ERRORS

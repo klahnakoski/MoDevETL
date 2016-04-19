@@ -1,5 +1,5 @@
 {
-	"incremental": true,
+	"incremental": false,
 	"constants": {
 		"pyLibrary.env.http.default_headers": {
 			"Referer": "https://wiki.mozilla.org/BMO/ElasticSearch"

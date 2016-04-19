@@ -42,7 +42,8 @@ def pull_from_es(settings, destq, all_parents, all_children, all_descendants, wo
         result = destq.query({
             "from": settings.destination.index,
             "select": "*",
-            "where": {"terms": {"bug_id": r}}
+            "where": {"terms": {"bug_id": r}},
+            "format": "list"
         })
         for r in result.data:
             all_parents.extend(r.bug_id, listwrap(r.parents))
@@ -56,7 +57,7 @@ def push_to_es(settings, data, dirty):
     global destination
 
     if not destination:
-        index = Index(settings.destination)
+        index = Index(read_only=False, settings=settings.destination)
         destination = index.threaded_queue(batch_size=100)
 
     # PREP RECORDS FOR ES

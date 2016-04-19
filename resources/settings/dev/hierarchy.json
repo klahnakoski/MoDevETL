@@ -1,14 +1,14 @@
 {
     "source": {
         "host": "http://elasticsearch-zlb.bugs.scl3.mozilla.com",
-        "port": "9200",
+        "port": 9200,
         "index": "public_bugs",
         "type": "bug_version",
-        "debug": false
+        "debug": true
     },
     "destination": {
         "host": "http://localhost",
-        "port": "9200",
+        "port": 9200,
         "index": "bug_hierarchy",
         "type": "bug_hierarchy",
         "debug": false

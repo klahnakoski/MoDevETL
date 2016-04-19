@@ -18,7 +18,7 @@ from pyLibrary.dot import coalesce
 from pyLibrary.env import elasticsearch
 from pyLibrary.env.elasticsearch import Cluster
 from pyLibrary.maths import Math
-from pyLibrary.queries import qb
+from pyLibrary.queries import jx
 from pyLibrary.queries.index import Index
 from pyLibrary.queries.qb_usingES import FromES
 from pyLibrary.thread.multithread import Multithread
@@ -45,7 +45,7 @@ def full_etl(settings, sink, bugs):
                 "where": {"terms": {"bug_id": bugs}}
             })
 
-        starts = qb.run({
+        starts = jx.run({
             "select": [
                 "bug_id",
                 "bug_status",
@@ -69,7 +69,7 @@ def full_etl(settings, sink, bugs):
             "sort": ["bug_id", "attach_id", "created_by"]
         })
 
-        ends = qb.run({
+        ends = jx.run({
             "select": [
                 {"name": "bug_id", "value": "bug_id"},
                 "bug_status",
@@ -107,7 +107,7 @@ def full_etl(settings, sink, bugs):
         })
 
         # SOME ATTACHMENTS GO MISSING, CLOSE THEM TOO
-        closed_bugs = {b.bug_id: b for b in qb.filter(versions, {"and": [# SOME BUGS ARE CLOSED WITHOUT REMOVING REVIEW
+        closed_bugs = {b.bug_id: b for b in jx.filter(versions, {"and": [# SOME BUGS ARE CLOSED WITHOUT REMOVING REVIEW
             {"terms": {"bug_status": ["resolved", "verified", "closed"]}},
             {"range": {"expires_on": {"gte": Date.now().milli}}}
         ]})}
@@ -130,7 +130,7 @@ def full_etl(settings, sink, bugs):
                 })
 
         # REVIEWS END WHEN REASSIGNED TO SOMEONE ELSE
-        changes = qb.run({
+        changes = jx.run({
             "select": [
                 "bug_id",
                 {"name": "attach_id", "value": "changes.attach_id"},
@@ -154,7 +154,7 @@ def full_etl(settings, sink, bugs):
         ends.extend(changes)
 
     # PYTHON VERSION NOT CAPABLE OF THIS JOIN, YET
-    # reviews = qb.run({
+    # reviews = jx.run({
     #     "from":
     #         starts,
     #     "select": [
@@ -193,9 +193,9 @@ def full_etl(settings, sink, bugs):
         reviews = []
         ends = Index(data=ends, keys=["bug_id", "attach_id", "request_type", "reviewer"])
 
-        for g, s in qb.groupby(starts, ["bug_id", "attach_id", "request_type", "reviewer"]):
-            start_candidates = qb.sort(s, {"value": "request_time", "sort": 1})
-            end_candidates = qb.sort(ends[g], {"value": "modified_ts", "sort": 1})
+        for g, s in jx.groupby(starts, ["bug_id", "attach_id", "request_type", "reviewer"]):
+            start_candidates = jx.sort(s, {"value": "request_time", "sort": 1})
+            end_candidates = jx.sort(ends[g], {"value": "modified_ts", "sort": 1})
 
             #ZIP, BUT WITH ADDED CONSTRAINT s.modified_ts<=e.modified_ts
             if len(start_candidates) > 1:
@@ -220,7 +220,7 @@ def full_etl(settings, sink, bugs):
                     continue
                 reviews.append(s)
 
-        qb.run({
+        jx.run({
             "from": reviews,
             "window": [{
                 "name": "is_first",
@@ -281,7 +281,7 @@ def main():
                         "max": max_bug,
                         "step": batch_size
                     })
-                    m.execute(reversed([{"bugs": range(s, e)} for s, e in qb.intervals(min_bug, max_bug, size=1000)]))
+                    m.execute(reversed([{"bugs": range(s, e)} for s, e in jx.intervals(min_bug, max_bug, size=1000)]))
 
             if settings.args.restart:
                 reviews.add_alias()

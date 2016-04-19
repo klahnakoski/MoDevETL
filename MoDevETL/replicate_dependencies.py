@@ -19,7 +19,7 @@ from pyLibrary.dot import coalesce
 from pyLibrary.env.elasticsearch import Cluster
 from pyLibrary.env.elasticsearch import Index
 from pyLibrary.env.files import File
-from pyLibrary.queries import qb
+from pyLibrary.queries import jx
 from pyLibrary.thread.threads import ThreadedQueue
 from pyLibrary.times.timer import Timer
 
@@ -71,7 +71,7 @@ def get_pending(es, since):
     max_bug = int(result.facets.default.max)
     pending_bugs = None
 
-    for s, e in qb.intervals(0, max_bug + 1, 100000):
+    for s, e in jx.intervals(0, max_bug + 1, 100000):
         Log.note("Collect history for bugs from {{start}}..{{end}}", {"start": s, "end": e})
         result = es.search({
             "query": {"filtered": {
@@ -109,7 +109,7 @@ def replicate(source, destination, pending, last_updated):
     COPY THE DEPENDENCY RECORDS TO THE destination
     NOTE THAT THE PUBLIC CLUSTER HAS HOLES, SO WE USE blocked TO FILL THEM
     """
-    for g, bugs in qb.groupby(pending, max_size=BATCH_SIZE):
+    for g, bugs in jx.groupby(pending, max_size=BATCH_SIZE):
         with Timer("Replicate {{num_bugs}} bug versions", {"num_bugs": len(bugs)}):
             data = source.search({
                 "query": {"filtered": {
@@ -146,13 +146,13 @@ def replicate(source, destination, pending, last_updated):
                 destination.extend(d2)
 
             with Timer("filter"):
-                d4 = qb.run({
+                d4 = jx.run({
                     "from": data.hits.hits.fields,
                     "where": {"exists": {"field": "blocked"}}
                 })
 
             with Timer("select"):
-                d3 = qb.run({
+                d3 = jx.run({
                     "from": d4,
                     "select": [
                         {"name": "bug_id", "value": "blocked."},  # SINCE blocked IS A LIST, ARE SELECTING THE LIST VALUES, AND EFFECTIVELY PERFORMING A JOIN

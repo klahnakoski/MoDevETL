@@ -19,8 +19,8 @@ from pyLibrary.debugs import startup, constants
 from pyLibrary.debugs.logs import Log
 from pyLibrary.dot import coalesce, Dict
 from pyLibrary.env.elasticsearch import Index, Cluster
-from pyLibrary.queries import qb
-from pyLibrary.queries.qb_usingES import FromES
+from pyLibrary.queries import jx
+from pyLibrary.queries.jx_usingES import FromES
 from pyLibrary.times.dates import Date
 from pyLibrary.times.timer import Timer
 
@@ -38,7 +38,7 @@ def listwrap(value):
 def pull_from_es(settings, destq, all_parents, all_children, all_descendants, work_queue):
     # LOAD PARENTS FROM ES
 
-    for g, r in qb.groupby(qb.sort(work_queue), size=100):
+    for g, r in jx.groupby(jx.sort(work_queue), size=100):
         result = destq.query({
             "from": settings.destination.index,
             "select": "*",
@@ -69,9 +69,9 @@ def push_to_es(settings, data, dirty):
         c = data.children[bug_id]
         destination.add({"id": bug_id, "value": {
             "bug_id": bug_id,
-            "parents": qb.sort(p),
-            "children": qb.sort(c),
-            "descendants": qb.sort(d),
+            "parents": jx.sort(p),
+            "children": jx.sort(c),
+            "descendants": jx.sort(d),
             "etl": {"timestamp": Date.now().unix}
         }})
 
@@ -79,18 +79,18 @@ def push_to_es(settings, data, dirty):
 def full_etl(settings):
     schema = convert.json2value(convert.value2json(SCHEMA), leaves=True)
     Cluster(settings.destination).get_or_create_index(settings=settings.destination, schema=schema, limit_replicas=True)
-    destq = FromES(settings.destination)
+    destq = FromES(typed=False, settings=settings.destination)
     if settings.incremental:
         min_bug_id = destq.query({
             "from": coalesce(settings.destination.alias, settings.destination.index),
             "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
         })
 
-        min_bug_id = int(MAX(min_bug_id-1000, 0))
+        min_bug_id = int(MAX([min_bug_id-1000, 0]))
     else:
         min_bug_id = 0
 
-    sourceq = FromES(settings.source)
+    sourceq = FromES(typed=False, settings=settings.source)
     max_bug_id = sourceq.query({
         "from": coalesce(settings.source.alias, settings.source.index),
         "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
@@ -98,7 +98,7 @@ def full_etl(settings):
     max_bug_id = int(coalesce(max_bug_id, 0))
 
     # FIRST, GET ALL MISSING BUGS
-    for s, e in qb.reverse(list(qb.intervals(min_bug_id, max_bug_id, 10000))):
+    for s, e in jx.reverse(list(jx.intervals(min_bug_id, max_bug_id, 10000))):
         with Timer("pull {{start}}..{{end}} from ES", {"start": s, "end": e}):
             children = sourceq.query({
                 "from": settings.source.alias,

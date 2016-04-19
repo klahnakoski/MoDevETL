@@ -210,10 +210,10 @@ class Index(Features):
 
     def flush(self):
         try:
-            self.cluster.post("/" + self.settings.index + "/_flush", data={"wait_if_ongoing": True, "forced": True})
+            self.cluster.post("/" + self.settings.index + "/_flush", data={"wait_if_ongoing": True, "forced": False})
         except Exception, e:
             if "FlushNotAllowedEngineException" in e:
-                Log.warning("Flush is ignored", cause=e)
+                Log.note("Flush is ignored")
             else:
                 Log.error("Problem flushing", cause=e)
 
@@ -619,7 +619,7 @@ class Cluster(object):
             Log.note("Deleting index {{index}}", index=index_name)
 
         # REMOVE ALL ALIASES TOO
-        aliases = [a for a in self.get_aliases() if a.index == index_name]
+        aliases = [a for a in self.get_aliases() if a.index == index_name and a.alias != None]
         if aliases:
             self.post(
                 path="/_aliases",

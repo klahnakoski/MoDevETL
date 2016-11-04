@@ -8,30 +8,33 @@
 # Author: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 
-from __future__ import unicode_literals
-from __future__ import division
 from __future__ import absolute_import
+from __future__ import division
+from __future__ import unicode_literals
+
 import __builtin__
 from collections import Mapping
 from types import GeneratorType
 
+import itertools
+
 from pyLibrary import dot, convert
 from pyLibrary.collections import UNION, MIN
 from pyLibrary.debugs.logs import Log
+from pyLibrary.dot import listwrap, wrap, unwrap, unwraplist
 from pyLibrary.dot import set_default, Null, Dict, split_field, coalesce, join_field
 from pyLibrary.dot.lists import DictList
-from pyLibrary.dot import listwrap, wrap, unwrap
 from pyLibrary.dot.objects import DictObject
 from pyLibrary.maths import Math
 from pyLibrary.queries import flat_list, query, group_by
 from pyLibrary.queries.containers import Container
+from pyLibrary.queries.containers.cube import Cube
 from pyLibrary.queries.cubes.aggs import cube_aggs
 from pyLibrary.queries.expression_compiler import compile_expression
 from pyLibrary.queries.expressions import TRUE_FILTER, FALSE_FILTER, jx_expression_to_function
 from pyLibrary.queries.flat_list import FlatList
 from pyLibrary.queries.index import Index
-from pyLibrary.queries.query import QueryOp, _normalize_selects, sort_direction, _normalize_select
-from pyLibrary.queries.containers.cube import Cube
+from pyLibrary.queries.query import QueryOp, _normalize_selects, sort_direction
 from pyLibrary.queries.unique_index import UniqueIndex
 
 # A COLLECTION OF DATABASE OPERATORS (RELATIONAL ALGEBRA OPERATORS)
@@ -39,6 +42,7 @@ from pyLibrary.queries.unique_index import UniqueIndex
 # START HERE: https://github.com/klahnakoski/jx/blob/master/docs/jx_reference.md
 # TODO: USE http://docs.sqlalchemy.org/en/latest/core/tutorial.html AS DOCUMENTATION FRAMEWORK
 
+builtin_tuple = tuple
 _Column = None
 _merge_type = None
 
@@ -50,28 +54,32 @@ def get(expr):
     return jx_expression_to_function(expr)
 
 
-def run(query, frum=None):
+def run(query, frum=Null):
     """
     THIS FUNCTION IS SIMPLY SWITCHING BASED ON THE query["from"] CONTAINER,
     BUT IT IS ALSO PROCESSING A list CONTAINER; SEPARATE TO A ListContainer
     """
-    query = QueryOp.wrap(query)
-    frum = coalesce(frum, query["from"])
+    if frum == None:
+        query_op = QueryOp.wrap(query)
+        frum = query_op.frum
+    else:
+        query_op = QueryOp.wrap(query, frum.schema)
+
     if isinstance(frum, Container):
-        return frum.query(query)
+        return frum.query(query_op)
     elif isinstance(frum, (list, set, GeneratorType)):
         frum = wrap(list(frum))
     elif isinstance(frum, Cube):
-        if is_aggs(query):
-            return cube_aggs(frum, query)
+        if is_aggs(query_op):
+            return cube_aggs(frum, query_op)
 
     elif isinstance(frum, QueryOp):
         frum = run(frum)
     else:
-        Log.error("Do not know how to handle {{type}}",  type=frum.__class__.__name__)
+        Log.error("Do not know how to handle {{type}}", type=frum.__class__.__name__)
 
-    if is_aggs(query):
-        frum = list_aggs(frum, query)
+    if is_aggs(query_op):
+        frum = list_aggs(frum, query_op)
     else:  # SETOP
         # try:
         #     if query.filter != None or query.esfilter != None:
@@ -79,26 +87,26 @@ def run(query, frum=None):
         # except AttributeError:
         #     pass
 
-        if query.where is not TRUE_FILTER:
-            frum = filter(frum, query.where)
+        if query_op.where is not TRUE_FILTER:
+            frum = filter(frum, query_op.where)
 
-        if query.sort:
-            frum = sort(frum, query.sort)
+        if query_op.sort:
+            frum = sort(frum, query_op.sort, already_normalized=True)
 
-        if query.select:
-            frum = select(frum, query.select)
+        if query_op.select:
+            frum = select(frum, query_op.select)
 
-    if query.window:
+    if query_op.window:
         if isinstance(frum, Cube):
             frum = list(frum.values())
 
-        for param in query.window:
+        for param in query_op.window:
             window(frum, param)
 
     # AT THIS POINT frum IS IN LIST FORMAT, NOW PACKAGE RESULT
-    if query.format == "cube":
+    if query_op.format == "cube":
         frum = convert.list2cube(frum)
-    elif query.format == "table":
+    elif query_op.format == "table":
         frum = convert.list2table(frum)
         frum.meta.format = "table"
     else:
@@ -333,7 +341,7 @@ def _select(template, data, fields, depth):
                 path = f.value[0:index:]
                 if not deep_fields[f]:
                     deep_fields.add(f)  # KEEP TRACK OF WHICH FIELDS NEED DEEPER SELECT
-                short = MIN(len(deep_path), len(path))
+                short = MIN([len(deep_path), len(path)])
                 if path[:short:] != deep_path[:short:]:
                     Log.error("Dangerous to select into more than one branch at time")
                 if len(deep_path) < len(path):
@@ -504,7 +512,7 @@ def _deeper_iterator(columns, nested_path, path, data):
             yield output
 """
 
-def sort(data, fieldnames=None):
+def sort(data, fieldnames=None, already_normalized=False):
     """
     PASS A FIELD NAME, OR LIST OF FIELD NAMES, OR LIST OF STRUCTS WITH {"field":field_name, "sort":direction}
     """
@@ -515,46 +523,17 @@ def sort(data, fieldnames=None):
         if not fieldnames:
             return wrap(sorted(data, value_compare))
 
-        fieldnames = listwrap(fieldnames)
-        if len(fieldnames) == 1:
-            fieldnames = fieldnames[0]
-            # SPECIAL CASE, ONLY ONE FIELD TO SORT BY
-            if fieldnames == ".":
-                return wrap(sorted(data))
-            if isinstance(fieldnames, (basestring, int)):
-                fieldnames = wrap({"value": fieldnames, "sort": 1})
+        if already_normalized:
+            formal = fieldnames
+        else:
+            formal = query._normalize_sort(fieldnames)
 
-            # EXPECTING {"value":f, "sort":i} FORMAT
-            fieldnames.sort = sort_direction.get(fieldnames.sort, 1)
-            fieldnames.value = coalesce(fieldnames.value, fieldnames.field)
-            if fieldnames.value == None:
-                Log.error("Expecting sort to have 'value' attribute")
-
-            if fieldnames.value == ".":
-                #VALUE COMPARE
-                def _compare_v(l, r):
-                    return value_compare(l, r, fieldnames.sort)
-                return DictList([unwrap(d) for d in sorted(data, cmp=_compare_v)])
-            elif isinstance(fieldnames.value, Mapping):
-                func = jx_expression_to_function(fieldnames.value)
-                def _compare_o(left, right):
-                    return value_compare(func(coalesce(left)), func(coalesce(right)), fieldnames.sort)
-                return DictList([unwrap(d) for d in sorted(data, cmp=_compare_o)])
-            else:
-                def _compare_o(left, right):
-                    return value_compare(coalesce(left)[fieldnames.value], coalesce(right)[fieldnames.value], fieldnames.sort)
-                return DictList([unwrap(d) for d in sorted(data, cmp=_compare_o)])
-
-        formal = query._normalize_sort(fieldnames)
-        for f in formal:
-            f.func = jx_expression_to_function(f.value)
+        funcs = [(jx_expression_to_function(f.value), f.sort) for f in formal]
 
         def comparer(left, right):
-            left = coalesce(left)
-            right = coalesce(right)
-            for f in formal:
+            for func, sort_ in funcs:
                 try:
-                    result = value_compare(f.func(left), f.func(right), f.sort)
+                    result = value_compare(func(left), func(right), sort_)
                     if result != 0:
                         return result
                 except Exception, e:
@@ -575,23 +554,43 @@ def sort(data, fieldnames=None):
 
 
 def value_compare(l, r, ordering=1):
+    """
+    SORT VALUES, NULL IS THE LEAST VALUE
+    :param l: LHS
+    :param r: RHS
+    :param ordering: (-1, 0, 0) TO AFFECT SORT ORDER
+    :return: The return value is negative if x < y, zero if x == y and strictly positive if x > y.
+    """
+
     if l == None:
         if r == None:
             return 0
         else:
-            return - ordering
+            return ordering
     elif r == None:
-        return ordering
+        return - ordering
 
     if isinstance(l, list) or isinstance(r, list):
         for a, b in zip(listwrap(l), listwrap(r)):
             c = value_compare(a, b) * ordering
             if c != 0:
                 return c
+
+        if len(l) < len(r):
+            return - ordering
+        elif len(l) > len(r):
+            return ordering
+        else:
+            return 0
+    elif isinstance(l, builtin_tuple) and isinstance(r, builtin_tuple):
+        for a, b in zip(l, r):
+            c = value_compare(a, b) * ordering
+            if c != 0:
+                return c
         return 0
     elif isinstance(l, Mapping):
         if isinstance(r, Mapping):
-            for k in set(l.keys()) | set(r.keys()):
+            for k in sorted(set(l.keys()) | set(r.keys())):
                 c = value_compare(l.get(k), r.get(k)) * ordering
                 if c != 0:
                     return c
@@ -602,9 +601,6 @@ def value_compare(l, r, ordering=1):
         return -1
     else:
         return cmp(l, r) * ordering
-
-
-
 
 
 def pairwise(values):
@@ -962,7 +958,7 @@ def window(data, param):
 
     if not aggregate and not edges:
         if sortColumns:
-            data = sort(data, sortColumns)
+            data = sort(data, sortColumns, already_normalized=True)
         # SIMPLE CALCULATED VALUE
         for rownum, r in enumerate(data):
             r[name] = calc_value(r, rownum, data)
@@ -973,7 +969,7 @@ def window(data, param):
             if not values:
                 continue     # CAN DO NOTHING WITH THIS ZERO-SAMPLE
 
-            sequence = sort(values, sortColumns)
+            sequence = sort(values, sortColumns, already_normalized=True)
 
             for rownum, r in enumerate(sequence):
                 r[name] = calc_value(r, rownum, sequence)

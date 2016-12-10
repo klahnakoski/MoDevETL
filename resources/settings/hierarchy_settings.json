@@ -1,6 +1,6 @@
 {
     "source": {
-        "host": "http://elasticsearch-zlb.bugs.scl3.mozilla.com",
+        "host": "https://esfrontline-public-vip.bugs.scl3.mozilla.com",
         "port": "9200",
         "index": "public_bugs",
         "type": "bug_version",

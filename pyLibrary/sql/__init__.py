@@ -8,20 +8,21 @@
 # Author: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 
-from __future__ import unicode_literals
-from __future__ import division
 from __future__ import absolute_import
+from __future__ import division
+from __future__ import unicode_literals
 
-from pyLibrary.debugs.logs import Log
-from pyLibrary.strings import expand_template
+from future.utils import text_type
+from mo_logs import Log
+from mo_logs.strings import expand_template
 
 
-class SQL(unicode):
+class SQL(text_type):
     """
     ACTUAL SQL, DO NOT QUOTE THIS STRING
     """
     def __init__(self, template='', param=None):
-        unicode.__init__(self)
+        text_type.__init__(self)
         self.template = template
         self.param = param
 
@@ -29,6 +30,23 @@ class SQL(unicode):
     def sql(self):
         return expand_template(self.template, self.param)
 
+    def __add__(self, other):
+        if not isinstance(other, SQL):
+            Log.error("Can only concat other SQL")
+        else:
+            return SQL(self.sql+other.sql)
+
     def __str__(self):
         Log.error("do not do this")
+
+
+
+
+class DB(object):
+
+    def quote_column(self, column_name, table=None):
+        raise NotImplementedError()
+
+    def db_type_to_json_type(self, type):
+        raise NotImplementedError()
 

@@ -1,6 +1,6 @@
 {
 	"source" : {
-		"host" : "http://elasticsearch-private.bugs.scl3.mozilla.com",
+		"host" : "http://esfrontline-private-vip.bugs.scl3.mozilla.com",
 		"port" : "9200",
 		"index" : "private_bugs",
 		"type" : "bug_version",
@@ -11,7 +11,7 @@
 	"destination" : {
 //		"host" : "http://localhost",
 //		"host" : "http://klahnakoski-es.corp.tor1.mozilla.com",
-		"host" : "http://elasticsearch-private.bugs.scl3.mozilla.com",
+		"host" : "http://esfrontline-private-vip.bugs.scl3.mozilla.com",
 		"port" : "9200",
 		"index" : "reviews",
 		"schema_file" : "resources/schema/review_type.json",

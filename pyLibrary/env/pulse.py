@@ -18,18 +18,21 @@ from kombu import Connection, Producer, Exchange
 from pytz import timezone
 from mozillapulse.utils import time_to_string
 
-from pyLibrary.debugs import constants
+from mo_logs import constants
 from pyLibrary import jsons
-from pyLibrary.debugs.exceptions import Except
-from pyLibrary.debugs.logs import Log
-from pyLibrary.dot import wrap, coalesce, Dict, set_default
-from pyLibrary.meta import use_settings
-from pyLibrary.thread.threads import Thread
+from mo_logs.exceptions import Except, suppress_exception
+from mo_logs import Log
+from mo_dots import wrap, coalesce, Data, set_default
+from mo_kwargs import override
+from mo_threads import Thread, Lock
 from mozillapulse.consumers import GenericConsumer
+
+count_locker=Lock()
+count=0
 
 
 class Consumer(Thread):
-    @use_settings
+    @override
     def __init__(
         self,
         exchange,  # name of the Pulse exchange
@@ -48,28 +51,35 @@ class Consumer(Thread):
         durable=False,  # True to keep queue after shutdown
         serializer='json',
         broker_timezone='GMT',
-        settings=None
+        kwargs=None
     ):
+        global count
+        count = coalesce(start, 0)
+
         self.target_queue = target_queue
         self.pulse_target = target
         if (target_queue == None and target == None) or (target_queue != None and target != None):
             Log.error("Expecting a queue (for fast digesters) or a target (for slow digesters)")
 
-        Thread.__init__(self, name="Pulse consumer for " + settings.exchange, target=self._worker)
-        self.settings = settings
-        settings.callback = self._got_result
-        settings.user = coalesce(settings.user, settings.username)
-        settings.applabel = coalesce(settings.applable, settings.queue, settings.queue_name)
-        settings.topic = topic
+        Thread.__init__(self, name="Pulse consumer for " + kwargs.exchange, target=self._worker)
+        self.settings = kwargs
+        kwargs.callback = self._got_result
+        kwargs.user = coalesce(kwargs.user, kwargs.username)
+        kwargs.applabel = coalesce(kwargs.applable, kwargs.queue, kwargs.queue_name)
+        kwargs.topic = topic
 
-        self.pulse = ModifiedGenericConsumer(settings, connect=True, **settings)
-        self.count = coalesce(start, 0)
+        self.pulse = ModifiedGenericConsumer(kwargs, connect=True, **kwargs)
         self.start()
 
     def _got_result(self, data, message):
+        global count
+
         data = wrap(data)
-        data._meta.count = self.count
-        self.count += 1
+        with count_locker:
+            Log.note("{{count}} from {{exchange}}", count=count, exchange=self.pulse.exchange)
+            data._meta.count = count
+            data._meta.exchange = self.pulse.exchange
+            count += 1
 
         if self.settings.debug:
             Log.note("{{data}}",  data= data)
@@ -77,7 +87,7 @@ class Consumer(Thread):
             try:
                 self.target_queue.add(data)
                 message.ack()
-            except Exception, e:
+            except Exception as e:
                 e = Except.wrap(e)
                 if not self.target_queue.closed:  # EXPECTED TO HAPPEN, THIS THREAD MAY HAVE BEEN AWAY FOR A WHILE
                     raise e
@@ -85,16 +95,14 @@ class Consumer(Thread):
             try:
                 self.pulse_target(data)
                 message.ack()
-            except Exception, e:
+            except Exception as e:
                 Log.warning("Problem processing pulse (see `data` in structured log)", data=data, cause=e)
 
     def _worker(self, please_stop):
         def disconnect():
-            try:
+            with suppress_exception:
                 self.target_queue.close()
                 Log.note("stop put into queue")
-            except:
-                pass
 
             self.pulse.disconnect()
             Log.note("pulse listener was given a disconnect()")
@@ -104,7 +112,7 @@ class Consumer(Thread):
         while not please_stop:
             try:
                 self.pulse.listen()
-            except Exception, e:
+            except Exception as e:
                 if not please_stop:
                     Log.warning("Pulse had problem (Have you set your Pulse permissions correctly?", e)
         Log.note("pulse listener is done")
@@ -113,15 +121,13 @@ class Consumer(Thread):
     def __exit__(self, exc_type, exc_val, exc_tb):
         Log.note("clean pulse exit")
         self.please_stop.go()
-        try:
+        with suppress_exception:
             self.target_queue.close()
             Log.note("stop put into queue")
-        except:
-            pass
 
         try:
             self.pulse.disconnect()
-        except Exception, e:
+        except Exception as e:
             Log.warning("Can not disconnect during pulse exit, ignoring", e)
         Thread.__exit__(self, exc_type, exc_val, exc_tb)
 
@@ -131,7 +137,7 @@ class Publisher(object):
     Mimic GenericPublisher https://github.com/bhearsum/mozillapulse/blob/master/mozillapulse/publishers.py
     """
 
-    @use_settings
+    @override
     def __init__(
         self,
         exchange,  # name of the Pulse exchange
@@ -147,9 +153,9 @@ class Publisher(object):
         durable=False,  # True to keep queue after shutdown
         serializer='json',
         broker_timezone='GMT',
-        settings=None
+        kwargs=None
     ):
-        self.settings = settings
+        self.settings = kwargs
         self.connection = None
         self.count = 0
 
@@ -188,7 +194,7 @@ class Publisher(object):
 
         # The message is actually a simple envelope format with a payload and
         # some metadata.
-        final_data = Dict(
+        final_data = Data(
             payload=message.data,
             _meta=set_default({
                 'exchange': self.settings.exchange,
@@ -209,7 +215,7 @@ class ModifiedGenericConsumer(GenericConsumer):
             try:
                 self.connection.drain_events(timeout=self.timeout)
             except socket_timeout, e:
-                Log.warning("timeout! Restarting pulse consumer.", cause=e)
+                Log.warning("timeout! Restarting {{name}} pulse consumer.", name=self.exchange, cause=e)
                 try:
                     self.disconnect()
                 except Exception, f:

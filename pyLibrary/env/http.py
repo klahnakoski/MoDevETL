@@ -9,40 +9,42 @@
 
 # MIMICS THE requests API (http://docs.python-requests.org/en/latest/)
 # DEMANDS data IS A JSON-SERIALIZABLE STRUCTURE
-# WITH ADDED default_headers THAT CAN BE SET USING pyLibrary.debugs.settings
+# WITH ADDED default_headers THAT CAN BE SET USING mo_logs.settings
 # EG
 # {"debug.constants":{
 #     "pyLibrary.env.http.default_headers":{"From":"klahnakoski@mozilla.com"}
 # }}
 
 
-from __future__ import unicode_literals
-from __future__ import division
 from __future__ import absolute_import
+from __future__ import division
+from __future__ import unicode_literals
 
-import types
 from copy import copy
 from mmap import mmap
 from numbers import Number
 from tempfile import TemporaryFile
 
+from future.utils import text_type
 from requests import sessions, Response
 
+import mo_json
 from pyLibrary import convert
-from pyLibrary.debugs.exceptions import Except
-from pyLibrary.debugs.logs import Log
-from pyLibrary.dot import Dict, coalesce, wrap, set_default
-from pyLibrary.env.big_data import safe_size, CompressedLines, ZipfileLines, GzipLines, scompressed2ibytes, ibytes2ilines, sbytes2ilines, icompressed2ibytes
-from pyLibrary.maths import Math
-from pyLibrary.queries import jx
-from pyLibrary.thread.threads import Thread, Lock
-from pyLibrary.times.durations import SECOND
+from mo_logs.exceptions import Except
+from mo_logs import Log
+from mo_dots import Data, coalesce, wrap, set_default, unwrap
+from pyLibrary.env.big_data import safe_size, ibytes2ilines, icompressed2ibytes
+from mo_math import Math
+from jx_python import jx
+from mo_threads import Thread, Lock
+from mo_threads import Till
+from mo_times.durations import Duration
 
-
+DEBUG = False
 FILE_SIZE_LIMIT = 100 * 1024 * 1024
 MIN_READ_SIZE = 8 * 1024
 ZIP_REQUEST = False
-default_headers = Dict()  # TODO: MAKE THIS VARIABLE A SPECIAL TYPE OF EXPECTED MODULE PARAMETER SO IT COMPLAINS IF NOT SET
+default_headers = Data()  # TODO: MAKE THIS VARIABLE A SPECIAL TYPE OF EXPECTED MODULE PARAMETER SO IT COMPLAINS IF NOT SET
 default_timeout = 600
 
 _warning_sent = False
@@ -85,7 +87,7 @@ def request(method, url, zip=None, retry=None, **kwargs):
                     return response
                 if not remaining:
                     return response
-            except Exception, e:
+            except Exception as e:
                 e = Except.wrap(e)
                 failures.append(e)
         Log.error("Tried {{num}} urls", num=len(url), cause=failures)
@@ -100,47 +102,52 @@ def request(method, url, zip=None, retry=None, **kwargs):
     if zip is None:
         zip = ZIP_REQUEST
 
-    if isinstance(url, unicode):
+    if isinstance(url, text_type):
         # httplib.py WILL **FREAK OUT** IF IT SEES ANY UNICODE
         url = url.encode("ascii")
 
     _to_ascii_dict(kwargs)
     timeout = kwargs[b'timeout'] = coalesce(kwargs.get(b'timeout'), default_timeout)
 
-    if retry is None:
-        retry = Dict(times=1, sleep=0)
+    if retry == None:
+        retry = Data(times=1, sleep=0)
     elif isinstance(retry, Number):
-        retry = Dict(times=retry, sleep=SECOND)
+        retry = Data(times=retry, sleep=1)
     else:
         retry = wrap(retry)
-        set_default(retry.sleep, {"times": 1, "sleep": 0})
+        if isinstance(retry.sleep, Duration):
+            retry.sleep = retry.sleep.seconds
+        set_default(retry, {"times": 1, "sleep": 0})
 
     if b'json' in kwargs:
         kwargs[b'data'] = convert.value2json(kwargs[b'json']).encode("utf8")
         del kwargs[b'json']
 
     try:
+        headers = kwargs[b"headers"] = unwrap(coalesce(wrap(kwargs)[b"headers"], {}))
+        set_default(headers, {b"accept-encoding": b"compress, gzip"})
+
         if zip and len(coalesce(kwargs.get(b"data"))) > 1000:
             compressed = convert.bytes2zip(kwargs[b"data"])
-            if b"headers" not in kwargs:
-                kwargs[b"headers"] = {}
-            kwargs[b"headers"][b'content-encoding'] = b'gzip'
+            headers[b'content-encoding'] = b'gzip'
             kwargs[b"data"] = compressed
 
-            _to_ascii_dict(kwargs[b"headers"])
+            _to_ascii_dict(headers)
         else:
-            _to_ascii_dict(kwargs.get(b"headers"))
-    except Exception, e:
+            _to_ascii_dict(headers)
+    except Exception as e:
         Log.error("Request setup failure on {{url}}", url=url, cause=e)
 
     errors = []
     for r in range(retry.times):
         if r:
-            Thread.sleep(retry.sleep)
+            Till(seconds=retry.sleep).wait()
 
         try:
+            if DEBUG:
+                Log.note("http {{method}} to {{url}}", method=method, url=url)
             return session.request(method=method, url=url, **kwargs)
-        except Exception, e:
+        except Exception as e:
             errors.append(Except.wrap(e))
 
     if " Read timed out." in errors[0]:
@@ -153,13 +160,13 @@ def _to_ascii_dict(headers):
     if headers is None:
         return
     for k, v in copy(headers).items():
-        if isinstance(k, unicode):
+        if isinstance(k, text_type):
             del headers[k]
-            if isinstance(v, unicode):
+            if isinstance(v, text_type):
                 headers[k.encode("ascii")] = v.encode("ascii")
             else:
                 headers[k.encode("ascii")] = v
-        elif isinstance(v, unicode):
+        elif isinstance(v, text_type):
             headers[k] = v.encode("ascii")
 
 
@@ -175,7 +182,7 @@ def get_json(url, **kwargs):
     """
     response = get(url, **kwargs)
     c = response.all_content
-    return convert.json2value(convert.utf82unicode(c))
+    return mo_json.json2value(convert.utf82unicode(c))
 
 def options(url, **kwargs):
     kwargs.setdefault(b'allow_redirects', True)
@@ -194,13 +201,17 @@ def post(url, **kwargs):
     return HttpResponse(request(b'post', url, **kwargs))
 
 
+def delete(url, **kwargs):
+    return HttpResponse(request(b'delete', url, **kwargs))
+
+
 def post_json(url, **kwargs):
     """
     ASSUME RESPONSE IN IN JSON
     """
     if b"json" in kwargs:
         kwargs[b"data"] = convert.unicode2utf8(convert.value2json(kwargs[b"json"]))
-    elif b'data':
+    elif b'data' in kwargs:
         kwargs[b"data"] = convert.unicode2utf8(convert.value2json(kwargs[b"data"]))
     else:
         Log.error("Expecting `json` parameter")
@@ -208,11 +219,11 @@ def post_json(url, **kwargs):
     response = post(url, **kwargs)
     c = response.content
     try:
-        details = convert.json2value(convert.utf82unicode(c))
-    except Exception, e:
+        details = mo_json.json2value(convert.utf82unicode(c))
+    except Exception as e:
         Log.error("Unexpected return value {{content}}", content=c, cause=e)
 
-    if response.status_code != 200:
+    if response.status_code not in [200, 201]:
         Log.error("Bad response", cause=Except.wrap(details))
 
     return details
@@ -255,7 +266,7 @@ class HttpResponse(Response):
                     self.close()
                     return None
 
-            self._cached_content = safe_size(Dict(read=read))
+            self._cached_content = safe_size(Data(read=read))
 
         if hasattr(self._cached_content, "read"):
             self._cached_content.seek(0)
@@ -264,22 +275,21 @@ class HttpResponse(Response):
 
     @property
     def all_lines(self):
-        return self._all_lines()
+        return self.get_all_lines()
 
-    def _all_lines(self, encoding="utf8"):
-        length = int(self.headers.get('content-length'))
-        raw = Generator_usingStream(self.raw, length)
-
+    def get_all_lines(self, encoding="utf8", flexible=False):
         try:
+            iterator = self.raw.stream(4096, decode_content=False)
+
             if self.headers.get('content-encoding') == 'gzip':
-                return ibytes2ilines(icompressed2ibytes(raw), encoding=encoding)
+                return ibytes2ilines(icompressed2ibytes(iterator), encoding=encoding, flexible=flexible)
             elif self.headers.get('content-type') == 'application/zip':
-                return ibytes2ilines(icompressed2ibytes(raw), encoding=encoding)
+                return ibytes2ilines(icompressed2ibytes(iterator), encoding=encoding, flexible=flexible)
             elif self.url.endswith(".gz"):
-                return ibytes2ilines(icompressed2ibytes(raw), encoding=encoding)
+                return ibytes2ilines(icompressed2ibytes(iterator), encoding=encoding, flexible=flexible)
             else:
-                return ibytes2ilines(raw, encoding=encoding, closer=self.close)
-        except Exception, e:
+                return ibytes2ilines(iterator, encoding=encoding, flexible=flexible, closer=self.close)
+        except Exception as e:
             Log.error("Can not read content", cause=e)
 
 
@@ -298,7 +308,7 @@ class Generator_usingStream(object):
         self.position = 0
         file_ = TemporaryFile()
         if not _shared:
-            self.shared = Dict(
+            self.shared = Data(
                 length=length,
                 locker=Lock(),
                 stream=stream,

@@ -1,0 +1,35 @@
+{
+	"source" : {
+		"host" : "http://elasticsearch-private.bugs.scl3.mozilla.com",
+		"port" : "9200",
+		"index" : "private_bugs",
+		"type" : "bug_version",
+		"debug" : true,
+		"batch_size" : 1000
+	},
+	"destination" : {
+		"host" : "http://localhost",
+//	    "host": "http://klahnakoski-es.corp.tor1.mozilla.com",
+//      "host": "http://elasticsearch-private.bugs.scl3.mozilla.com",
+		"port" : "9200",
+		"index" : "reviews",
+		"schema" : {"$ref": "../schema/review_type.json"},
+		"limit_replicas" : true,
+		"type" : "patch_review",
+		"batch_size" : 100,
+		"debug" : true
+	},
+	"threads" : 4,
+//	"min_bug":53000,
+	"max_bug":100000,
+	"debug" : {
+		"profile" : false,
+		"trace" : true,
+		"log" : [
+			{
+				"log_type" : "stream",
+				"stream" : "sys.stdout"
+			}
+		]
+	}
+}

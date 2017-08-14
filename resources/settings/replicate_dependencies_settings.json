@@ -1,33 +1,35 @@
 {
-		"source":{
-			"host":"https://esfrontline.bugzilla.mozilla.org",
-			"port":443,
-			"index":"public_bugs",
-			"type":"bug_version",
-            "explore_metadata":false
-		},
-		"destination":{
-			"host":"http://localhost",
-			"port": 9200,
-			"index":"bug_hierarchy",
-			"type":"bug_version"
-		},
-		"param":{
-			"last_replication_time":"./results/data/last_dependencies_replication_time.txt"
-		},
-		"debug":{
-			"trace":true,
-			"log":[{
-				"class": "logging.handlers.RotatingFileHandler",
-				"filename": "./results/logs/replication.log",
-				"maxBytes": 10000000,
-				"backupCount": 200,
-				"encoding": "utf8"
-			},{
-				"log_type": "stream",
-				"stream":"sys.stdout"
-			}]
-	}
+	"source": {
+		"host": "https://esfrontline.bugzilla.mozilla.org",
+		"port": 443,
+		"index": "public_bugs",
+		"type": "bug_version",
+		"explore_metadata": false
+	},
+	"destination": {
+		"host": "http://localhost",
+		"port": 9200,
+		"index": "bug_hierarchy",
+		"type": "bug_version"
+	},
+	"param": {
+		"last_replication_time": "./results/data/last_dependencies_replication_time.txt"
+	},
+	"debug": {
+		"trace": true,
+		"log": [
+			{
+				"log_type": "ses", "$ref": "file://~/private.json#aws_credentials",
+				"from_address": "klahnakoski@mozilla.com",
+				"to_address": "klahnakoski@mozilla.com",
+				"subject": "[ALERT][STAGING]Problem with ActiveData Server",
 
+			},
+			{
+				"log_type": "stream",
+				"stream": "sys.stdout"
+			}
+		]
+	}
 
 }

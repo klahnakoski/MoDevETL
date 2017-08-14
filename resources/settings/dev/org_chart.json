@@ -1,0 +1,67 @@
+{
+	"source": {
+		"url": "https://phonebook.mozilla.org/search.php?format=json&query=*",
+		"auth": {
+			"$ref": "file://~/private.json#phonebook"
+		}
+	},
+	"constants":{
+		"pyLibrary.env.http.default_headers":{"Referer":"https://wiki.mozilla.org/Auto-tools/Projects/DevelopmentMetrics"}
+	},
+	"destination": {
+		"host": "http://localhost",
+		"port": 9200,
+		"index": "org_chart",
+		"limit_replicas": true,
+		"debug": false,
+		"schema": {
+			"settings": {
+				"index.number_of_shards": 1,
+				"index.number_of_replicas": 2,
+				"index.routing.allocation.total_shards_per_node": 1
+			},
+			"mappings": {
+				"person": {
+					"_source": {
+						"enabled": true
+					},
+					"_all": {
+						"enabled": false
+					},
+					"properties": {
+						"id": {
+							"type": "string",
+							"store": "yes",
+							"index": "not_analyzed"
+						},
+						"name": {
+							"type": "string",
+							"store": "yes",
+							"index": "not_analyzed"
+						},
+						"manager": {
+							"type": "string",
+							"store": "yes",
+							"index": "not_analyzed"
+						},
+						"email": {
+							"type": "string",
+							"store": "yes",
+							"index": "not_analyzed"
+						}
+					}
+				}
+			}
+		}
+	},
+	"debug": {
+		"profile": false,
+		"trace": true,
+		"log": [
+			{
+				"log_type": "stream",
+				"stream": "sys.stdout"
+			}
+		]
+	}
+}

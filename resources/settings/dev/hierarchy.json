@@ -1,0 +1,26 @@
+{
+    "source": {
+        "host": "https://esfrontline-public-vip.bugs.scl3.mozilla.com",
+        "port": 9200,
+        "index": "public_bugs",
+        "type": "bug_version",
+        "debug": true
+    },
+    "destination": {
+        "host": "http://localhost",
+        "port": 9200,
+        "index": "bug_hierarchy",
+        "type": "bug_hierarchy",
+        "debug": false
+    },
+    "debug": {
+        "cprofile": true,
+        "trace": true,
+        "log": [
+            {
+                "log_type": "stream",
+                "stream": "sys.stdout"
+            }
+        ]
+    }
+}

@@ -10,15 +10,17 @@
 
 from __future__ import unicode_literals
 import functools
-from pyLibrary.cnv import CNV
 
-from pyLibrary.env import startup, elasticsearch
+from pyLibrary import convert
+from pyLibrary.debugs import startup
+from pyLibrary.debugs.logs import Log
+from pyLibrary.dot import coalesce
+from pyLibrary.env import elasticsearch
 from pyLibrary.env.elasticsearch import Cluster
-from pyLibrary.env.logs import Log
 from pyLibrary.maths import Math
-from pyLibrary.queries import Q, index
-from pyLibrary.queries.es_query import ESQuery
-from pyLibrary.struct import nvl
+from pyLibrary.queries import jx
+from pyLibrary.queries.index import Index
+from pyLibrary.queries.qb_usingES import FromES
 from pyLibrary.thread.multithread import Multithread
 from pyLibrary.thread.threads import ThreadedQueue
 from pyLibrary.times.dates import Date
@@ -36,14 +38,14 @@ TYPES = ["review", "superreview", "ui-review"]
 def full_etl(settings, sink, bugs):
     with Timer("process block {{start}}", {"start": min(bugs)}):
         es = elasticsearch.Index(settings.source)
-        with ESQuery(es) as esq:
+        with FromES(es) as esq:
             versions = esq.query({
                 "from": "bugs",
                 "select": "*",
                 "where": {"terms": {"bug_id": bugs}}
             })
 
-        starts = Q.run({
+        starts = jx.run({
             "select": [
                 "bug_id",
                 "bug_status",
@@ -67,7 +69,7 @@ def full_etl(settings, sink, bugs):
             "sort": ["bug_id", "attach_id", "created_by"]
         })
 
-        ends = Q.run({
+        ends = jx.run({
             "select": [
                 {"name": "bug_id", "value": "bug_id"},
                 "bug_status",
@@ -105,7 +107,7 @@ def full_etl(settings, sink, bugs):
         })
 
         # SOME ATTACHMENTS GO MISSING, CLOSE THEM TOO
-        closed_bugs = {b.bug_id: b for b in Q.filter(versions, {"and": [# SOME BUGS ARE CLOSED WITHOUT REMOVING REVIEW
+        closed_bugs = {b.bug_id: b for b in jx.filter(versions, {"and": [# SOME BUGS ARE CLOSED WITHOUT REMOVING REVIEW
             {"terms": {"bug_status": ["resolved", "verified", "closed"]}},
             {"range": {"expires_on": {"gte": Date.now().milli}}}
         ]})}
@@ -128,7 +130,7 @@ def full_etl(settings, sink, bugs):
                 })
 
         # REVIEWS END WHEN REASSIGNED TO SOMEONE ELSE
-        changes = Q.run({
+        changes = jx.run({
             "select": [
                 "bug_id",
                 {"name": "attach_id", "value": "changes.attach_id"},
@@ -152,16 +154,16 @@ def full_etl(settings, sink, bugs):
         ends.extend(changes)
 
     # PYTHON VERSION NOT CAPABLE OF THIS JOIN, YET
-    # reviews = Q.run({
+    # reviews = jx.run({
     #     "from":
     #         starts,
     #     "select": [
     #         {"name": "bug_status", "value": "bug_status", "aggregate": "one"},
     #         {"name": "review_time", "value": "doneReview.modified_ts", "aggregate": "minimum"},
     #         {"name": "review_result", "value": "doneReview.review_result", "aggregate": "minimum"},
-    #         {"name": "product", "value": "nvl(doneReview.product, product)", "aggregate": "minimum"},
-    #         {"name": "component", "value": "nvl(doneReview.component, component)", "aggregate": "minimum"},
-    #         # {"name": "keywords", "value": "(nvl(keywords, '')+' '+ETL.parseWhiteBoard(whiteboard)).trim()+' '+flags", "aggregate": "one"},
+    #         {"name": "product", "value": "coalesce(doneReview.product, product)", "aggregate": "minimum"},
+    #         {"name": "component", "value": "coalesce(doneReview.component, component)", "aggregate": "minimum"},
+    #         # {"name": "keywords", "value": "(coalesce(keywords, '')+' '+ETL.parseWhiteBoard(whiteboard)).trim()+' '+flags", "aggregate": "one"},
     #         {"name": "requester_review_num", "value": "-1", "aggregate": "one"}
     #     ],
     #     "analytic": [
@@ -189,18 +191,18 @@ def full_etl(settings, sink, bugs):
 
     with Timer("match starts and ends for block {{start}}", {"start":min(*bugs)}):
         reviews = []
-        ends = index.Index(ends, keys=["bug_id", "attach_id", "request_type", "reviewer"])
+        ends = Index(data=ends, keys=["bug_id", "attach_id", "request_type", "reviewer"])
 
-        for g, s in Q.groupby(starts, ["bug_id", "attach_id", "request_type", "reviewer"]):
-            start_candidates = Q.sort(s, {"value": "request_time", "sort": 1})
-            end_candidates = Q.sort(ends[g], {"value": "modified_ts", "sort": 1})
+        for g, s in jx.groupby(starts, ["bug_id", "attach_id", "request_type", "reviewer"]):
+            start_candidates = jx.sort(s, {"value": "request_time", "sort": 1})
+            end_candidates = jx.sort(ends[g], {"value": "modified_ts", "sort": 1})
 
             #ZIP, BUT WITH ADDED CONSTRAINT s.modified_ts<=e.modified_ts
             if len(start_candidates) > 1:
                 Log.note("many reviews on one attachment")
             ei = 0
             for i, s in enumerate(start_candidates):
-                while ei < len(end_candidates) and end_candidates[ei].modified_ts < nvl(s.request_time, CNV.datetime2milli(Date.MAX)):
+                while ei < len(end_candidates) and end_candidates[ei].modified_ts < coalesce(s.request_time, convert.datetime2milli(Date.MAX)):
                     ei += 1
                 e = end_candidates[ei]
 
@@ -208,8 +210,8 @@ def full_etl(settings, sink, bugs):
                 s.review_duration = e.modified_ts - s.request_time
                 s.review_result = e.review_result
                 s.review_end_reason = e.review_end_reason
-                s.product = nvl(e.product, s.product)
-                s.component = nvl(e.component, s.component)
+                s.product = coalesce(e.product, s.product)
+                s.component = coalesce(e.component, s.component)
                 s.requester_review_num = -1
                 ei += 1
 
@@ -218,7 +220,7 @@ def full_etl(settings, sink, bugs):
                     continue
                 reviews.append(s)
 
-        Q.run({
+        jx.run({
             "from": reviews,
             "window": [{
                 "name": "is_first",
@@ -230,7 +232,7 @@ def full_etl(settings, sink, bugs):
         })
 
     with Timer("add {{num}} reviews to ES for block {{start}}", {"start": min(*bugs), "num": len(reviews)}):
-        sink.extend({"json": CNV.object2JSON(r)} for r in reviews)
+        sink.extend({"json": convert.value2json(r)} for r in reviews)
 
 
 def main():
@@ -251,26 +253,26 @@ def main():
 
             bugs = Cluster(settings.source).get_index(settings.source)
 
-            with ESQuery(bugs) as esq:
+            with FromES(bugs) as esq:
                 es_max_bug = esq.query({
                     "from": "private_bugs",
                     "select": {"name": "max_bug", "value": "bug_id", "aggregate": "maximum"}
                 })
 
             #PROBE WHAT RANGE OF BUGS IS LEFT TO DO (IN EVENT OF FAILURE)
-            with ESQuery(reviews) as esq:
+            with FromES(reviews) as esq:
                 es_min_bug = esq.query({
                     "from": "reviews",
                     "select": {"name": "min_bug", "value": "bug_id", "aggregate": "minimum"}
                 })
 
-            batch_size = nvl(bugs.settings.batch_size, settings.size, 1000)
-            threads = nvl(settings.threads, 4)
+            batch_size = coalesce(bugs.settings.batch_size, settings.size, 1000)
+            threads = coalesce(settings.threads, 4)
             Log.note(str(settings.min_bug))
-            min_bug = int(nvl(settings.min_bug, 0))
-            max_bug = int(nvl(settings.max_bug, Math.min(es_min_bug + batch_size * threads, es_max_bug)))
+            min_bug = int(coalesce(settings.min_bug, 0))
+            max_bug = int(coalesce(settings.max_bug, Math.min(es_min_bug + batch_size * threads, es_max_bug)))
 
-            with ThreadedQueue(reviews, size=nvl(reviews.settings.batch_size, 100)) as sink:
+            with ThreadedQueue(reviews, batch_size=coalesce(reviews.settings.batch_size, 100)) as sink:
                 func = functools.partial(full_etl, settings, sink)
                 with Multithread(func, threads=threads) as m:
                     m.inbound.silent = True
@@ -279,7 +281,7 @@ def main():
                         "max": max_bug,
                         "step": batch_size
                     })
-                    m.execute(reversed([{"bugs": range(s, e)} for s, e in Q.intervals(min_bug, max_bug, size=1000)]))
+                    m.execute(reversed([{"bugs": range(s, e)} for s, e in jx.intervals(min_bug, max_bug, size=1000)]))
 
             if settings.args.restart:
                 reviews.add_alias()

@@ -12,27 +12,19 @@ from __future__ import unicode_literals
 
 from datetime import timedelta, datetime
 
+from jx_python import jx
+from mo_collections.relation import Relation
+from mo_dots import coalesce, Data, listwrap
+from mo_logs import Log, constants, startup
+from mo_math import MAX
+from mo_times import Date, Timer
 from pyLibrary import convert
-from pyLibrary.collections import MAX
-from pyLibrary.collections.relation import Relation
-from pyLibrary.debugs import startup, constants
-from pyLibrary.debugs.logs import Log
-from pyLibrary.dot import coalesce, Dict
-from pyLibrary.env.elasticsearch import Index, Cluster
-from pyLibrary.queries import jx
-from pyLibrary.queries.jx_usingES import FromES
-from pyLibrary.times.dates import Date
-from pyLibrary.times.timer import Timer
+from pyLibrary.env import elasticsearch
+from pyLibrary.env.elasticsearch import Cluster
+
+from jx_elasticsearch.jx_usingES import FromES
 
 MIN_DEPENDENCY_LIFETIME = 2 * 24 * 60 * 60 * 1000  # less than 2 days of dependency is ignored (mistakes happen)
-
-def listwrap(value):
-    if isinstance(value, list):
-        return value
-    elif value == None:
-        return []
-    else:
-        return [value]
 
 
 def pull_from_es(settings, destq, all_parents, all_children, all_descendants, work_queue):
@@ -57,7 +49,7 @@ def push_to_es(settings, data, dirty):
     global destination
 
     if not destination:
-        index = Index(read_only=False, settings=settings.destination)
+        index = elasticsearch.Index(read_only=False, kwargs=settings.destination)
         destination = index.threaded_queue(batch_size=100)
 
     # PREP RECORDS FOR ES
@@ -79,8 +71,8 @@ def push_to_es(settings, data, dirty):
 
 def full_etl(settings):
     schema = convert.json2value(convert.value2json(SCHEMA), leaves=True)
-    Cluster(settings.destination).get_or_create_index(settings=settings.destination, schema=schema, limit_replicas=True)
-    destq = FromES(typed=False, settings=settings.destination)
+    Cluster(settings.destination).get_or_create_index(schema=schema, limit_replicas=True, kwargs=settings.destination)
+    destq = FromES(typed=False, kwargs=settings.destination)
     if settings.incremental:
         min_bug_id = destq.query({
             "from": coalesce(settings.destination.alias, settings.destination.index),
@@ -91,7 +83,7 @@ def full_etl(settings):
     else:
         min_bug_id = 0
 
-    sourceq = FromES(typed=False, settings=settings.source)
+    sourceq = FromES(typed=False, kwargs=settings.source)
     max_bug_id = sourceq.query({
         "from": coalesce(settings.source.alias, settings.source.index),
         "select": {"name": "max_bug_id", "value": "bug_id", "aggregate": "max"}
@@ -193,7 +185,7 @@ def to_fix_point(settings, destq, children):
             work_queue = next_queue
 
     Log.note("{{num}} new records to ES", {"num": len(dirty)})
-    push_to_es(settings, Dict(
+    push_to_es(settings, Data(
         parents=all_parents,
         children=all_children,
         descendants=all_descendants

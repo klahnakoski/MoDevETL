@@ -28,11 +28,8 @@
 		"trace" : true,
 		"log": [
 			{
-				"log_type": "ses", "$ref": "file://~/private.json#aws_credentials",
-				"from_address": "klahnakoski@mozilla.com",
-				"to_address": "klahnakoski@mozilla.com",
 				"subject": "[ALERT][Toronto]Problem with Review ETL",
-
+				"$ref": "email.json"
 			},
 			{
 				"log_type" : "stream",

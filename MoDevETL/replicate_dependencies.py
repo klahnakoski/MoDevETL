@@ -206,7 +206,7 @@ def start():
         settings = startup.read_settings()
         Log.start(settings.debug)
         main(settings)
-    except Exception, e:
+    except Exception as e:
         Log.error("Problems exist", e)
     finally:
         Log.stop()

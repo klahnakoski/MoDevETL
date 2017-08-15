@@ -1,7 +1,7 @@
 {
 	"source" : {
 		"host" : "http://esfrontline-private-vip.bugs.scl3.mozilla.com",
-		"port" : "9200",
+		"port" : 9200,
 		"index" : "private_bugs",
 		"type" : "bug_version",
 		"debug" : true,
@@ -12,16 +12,16 @@
 //		"host" : "http://localhost",
 //		"host" : "http://klahnakoski-es.corp.tor1.mozilla.com",
 		"host" : "http://esfrontline-private-vip.bugs.scl3.mozilla.com",
-		"port" : "9200",
+		"port" : 9200,
 		"index" : "reviews",
-		"schema_file" : "resources/schema/review_type.json",
+		"schema" : {"$ref": "../schema/review_type.json"},
 		"limit_replicas" : true,
 		"type" : "patch_review",
 		"batch_size" : 100,
 		"debug" : true
 	},
 	"threads" : 4,
-	"min_bug":800000,
+	"min_bug":1000000,
 //	"max_bug":63000,
 	"debug" : {
 		"profile" : false,

@@ -1,7 +1,7 @@
 {
 	"source" : {
-		"host" : "http://esfrontline-public-vip.bugs.scl3.mozilla.com",
-		"port" : "9200",
+		"host" : "http://elasticsearch1.bugs.scl3.mozilla.com",
+		"port" : 9200,
 		"index" : "public_bugs",
 		"type" : "bug_version",
 		"debug" : true,
@@ -11,10 +11,10 @@
 	"destination" : {
 //		"host" : "http://localhost",
 //		"host" : "http://klahnakoski-es.corp.tor1.mozilla.com",
-		"host" : "http://esfrontline-public-vip.bugs.scl3.mozilla.com",
-		"port" : "9200",
+		"host" : "http://elasticsearch1.bugs.scl3.mozilla.com",
+		"port" : 9200,
 		"index" : "reviews",
-		"schema_file" : "resources/schema/review_type.json",
+		"schema" : {"$ref": "../schema/review_type.json"},
 		"limit_replicas" : true,
 		"type" : "patch_review",
 		"batch_size" : 100,
@@ -22,7 +22,7 @@
 	},
 	"threads" : 4,
 //	"min_bug":300000,
-	"max_bug":800000,
+	"max_bug":1000000,
 	"debug" : {
 		"profile" : false,
 		"trace" : true,

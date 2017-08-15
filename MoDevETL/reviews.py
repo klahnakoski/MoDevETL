@@ -8,24 +8,24 @@
 # Author: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 
+from __future__ import division
 from __future__ import unicode_literals
-import functools
 
-from pyLibrary import convert
-from pyLibrary.debugs import startup
-from pyLibrary.debugs.logs import Log
-from pyLibrary.dot import coalesce
+from future.utils import text_type
+from jx_python import jx
+from mo_dots import coalesce
+from mo_json import value2json
+from mo_logs import Log
+from mo_logs import startup
+from mo_math import Math
+from mo_threads import ThreadedQueue, Thread, THREAD_STOP, Queue
+from mo_times import Date, Timer
+
+from jx_elasticsearch.jx_usingES import FromES
+from mo_collections.index import Index
+from mo_json.encoder import datetime2milli
 from pyLibrary.env import elasticsearch
 from pyLibrary.env.elasticsearch import Cluster
-from pyLibrary.maths import Math
-from pyLibrary.queries import jx
-from pyLibrary.queries.index import Index
-from pyLibrary.queries.qb_usingES import FromES
-from pyLibrary.thread.multithread import Multithread
-from pyLibrary.thread.threads import ThreadedQueue
-from pyLibrary.times.dates import Date
-from pyLibrary.times.timer import Timer
-
 
 TYPES = ["review", "superreview", "ui-review"]
 
@@ -37,13 +37,12 @@ TYPES = ["review", "superreview", "ui-review"]
 
 def full_etl(settings, sink, bugs):
     with Timer("process block {{start}}", {"start": min(bugs)}):
-        es = elasticsearch.Index(settings.source)
-        with FromES(es) as esq:
-            versions = esq.query({
-                "from": "bugs",
-                "select": "*",
-                "where": {"terms": {"bug_id": bugs}}
-            })
+        esq = FromES(settings.source)
+        versions = esq.query({
+            "from": "bugs",
+            "select": "*",
+            "where": {"terms": {"bug_id": bugs}}
+        })
 
         starts = jx.run({
             "select": [
@@ -63,8 +62,8 @@ def full_etl(settings, sink, bugs):
                 {"and": [
                     {"terms": {"attachments.flags.request_status": ["?"]}},
                     {"terms": {"attachments.flags.request_type": TYPES}},
-                    {"equal": ["attachments.flags.modified_ts", "modified_ts"]},
-                    {"term": {"attachments.isobsolete": 0}}
+                    {"eq": ["attachments.flags.modified_ts", "modified_ts"]},
+                    {"eq": {"attachments.isobsolete": 0}}
                 ]},
             "sort": ["bug_id", "attach_id", "created_by"]
         })
@@ -90,13 +89,13 @@ def full_etl(settings, sink, bugs):
                     {"terms": {"attachments.flags.request_type": TYPES}},
                     {"or": [
                         {"and": [# IF THE REQUESTEE SWITCHED THE ? FLAG, THEN IT IS DONE
-                            {"term": {"attachments.flags.previous_status": "?"}},
-                            {"not": {"term": {"attachments.flags.request_status": "?"}}},
-                            {"equal": ["attachments.flags.modified_ts", "modified_ts"]}
+                            {"eq": {"attachments.flags.previous_status": "?"}},
+                            {"not": {"eq": {"attachments.flags.request_status": "?"}}},
+                            {"eq": ["attachments.flags.modified_ts", "modified_ts"]}
                         ]},
                         {"and": [# IF OBSOLETED THE ATTACHMENT, IT IS DONE
-                            {"term": {"attachments.isobsolete": 1}},
-                            {"term": {"previous_values.isobsolete_value": 0}}
+                            {"eq": {"attachments.isobsolete": 1}},
+                            {"eq": {"previous_values.isobsolete_value": 0}}
                         ]},
                         {"and": [# SOME BUGS ARE CLOSED WITHOUT REMOVING REVIEW
                             {"terms": {"bug_status": ["resolved", "verified", "closed"]}},
@@ -146,7 +145,7 @@ def full_etl(settings, sink, bugs):
                 versions,
             "where":
                 {"and": [# ONLY LOOK FOR NAME CHANGES IN THE "review?" FIELD
-                    {"term": {"changes.field_name": "flags"}},
+                    {"eq": {"changes.field_name": "flags"}},
                     {"or": [{"prefix": {"changes.old_value": t + "?"}} for t in TYPES]}
                 ]}
         })
@@ -202,7 +201,7 @@ def full_etl(settings, sink, bugs):
                 Log.note("many reviews on one attachment")
             ei = 0
             for i, s in enumerate(start_candidates):
-                while ei < len(end_candidates) and end_candidates[ei].modified_ts < coalesce(s.request_time, convert.datetime2milli(Date.MAX)):
+                while ei < len(end_candidates) and end_candidates[ei].modified_ts < coalesce(s.request_time, datetime2milli(Date.MAX)):
                     ei += 1
                 e = end_candidates[ei]
 
@@ -232,7 +231,7 @@ def full_etl(settings, sink, bugs):
         })
 
     with Timer("add {{num}} reviews to ES for block {{start}}", {"start": min(*bugs), "num": len(reviews)}):
-        sink.extend({"json": convert.value2json(r)} for r in reviews)
+        sink.extend({"json": value2json(r)} for r in reviews)
 
 
 def main():
@@ -253,35 +252,48 @@ def main():
 
             bugs = Cluster(settings.source).get_index(settings.source)
 
-            with FromES(bugs) as esq:
-                es_max_bug = esq.query({
-                    "from": "private_bugs",
-                    "select": {"name": "max_bug", "value": "bug_id", "aggregate": "maximum"}
-                })
-
-            #PROBE WHAT RANGE OF BUGS IS LEFT TO DO (IN EVENT OF FAILURE)
-            with FromES(reviews) as esq:
-                es_min_bug = esq.query({
-                    "from": "reviews",
-                    "select": {"name": "min_bug", "value": "bug_id", "aggregate": "minimum"}
-                })
-
+            esq = FromES(settings.source)
+            es_sample = esq.query({
+                "from": "private_bugs",
+                "select": [
+                    {"name": "max_bug", "value": "bug_id", "aggregate": "maximum"},
+                    {"name": "min_bug", "value": "bug_id", "aggregate": "minimum"}
+                ]
+            })
             batch_size = coalesce(bugs.settings.batch_size, settings.size, 1000)
             threads = coalesce(settings.threads, 4)
-            Log.note(str(settings.min_bug))
+            Log.note("Starting at bug {{num}}", num=settings.min_bug)
             min_bug = int(coalesce(settings.min_bug, 0))
-            max_bug = int(coalesce(settings.max_bug, Math.min(es_min_bug + batch_size * threads, es_max_bug)))
+            max_bug = int(coalesce(settings.max_bug, Math.max(es_sample.min_bug.value + batch_size * threads, es_sample.max_bug.value)))
 
-            with ThreadedQueue(reviews, batch_size=coalesce(reviews.settings.batch_size, 100)) as sink:
-                func = functools.partial(full_etl, settings, sink)
-                with Multithread(func, threads=threads) as m:
-                    m.inbound.silent = True
-                    Log.note("bugs from {{min}} to {{max}}, step {{step}}", {
-                        "min": min_bug,
-                        "max": max_bug,
-                        "step": batch_size
-                    })
-                    m.execute(reversed([{"bugs": range(s, e)} for s, e in jx.intervals(min_bug, max_bug, size=1000)]))
+
+            Log.note("bugs from {{min}} to {{max}}, step {{step}}", {
+                "min": min_bug,
+                "max": max_bug,
+                "step": batch_size
+            })
+            work_queue = Queue("review blocks", max=1*1000*1000, silent=True)
+
+            def worker(please_stop):
+                while not please_stop:
+                    bugs = work_queue.pop()
+                    full_etl(settings, reviews,  bugs)
+
+            live_threads = [
+                Thread.run(
+                    text_type(n),
+                    worker
+                )
+                for n in range(threads)
+            ]
+
+            for bugs in reversed([range(s, e) for s, e in jx.intervals(min_bug, max_bug, size=1000)]):
+                work_queue.add(bugs)
+            work_queue.add(THREAD_STOP)
+
+
+            for t in live_threads:
+                t.join()
 
             if settings.args.restart:
                 reviews.add_alias()

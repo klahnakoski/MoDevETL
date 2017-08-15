@@ -13,15 +13,15 @@ from datetime import datetime, timedelta
 
 from pyLibrary import convert
 from pyLibrary.collections import Multiset, MIN
-from pyLibrary.debugs import startup
-from pyLibrary.debugs.logs import Log
-from pyLibrary.dot import coalesce
+from mo_logs import startup
+from mo_logs.logs import Log
+from mo_dots import coalesce
 from pyLibrary.env.elasticsearch import Cluster
 from pyLibrary.env.elasticsearch import Index
-from pyLibrary.env.files import File
+from mo_files import File
 from pyLibrary.queries import jx
-from pyLibrary.thread.threads import ThreadedQueue
-from pyLibrary.times.timer import Timer
+from mo_threads.threads import ThreadedQueue
+from mo_times.timer import Timer
 
 # REPLICATION
 #

@@ -13,9 +13,9 @@ from __future__ import unicode_literals
 import requests
 
 from pyLibrary import convert
-from pyLibrary.debugs import startup, constants
-from pyLibrary.debugs.logs import Log
-from pyLibrary.dot import listwrap
+from mo_logs import startup, constants
+from mo_logs.logs import Log
+from mo_dots import listwrap
 from pyLibrary.env import elasticsearch
 
 
